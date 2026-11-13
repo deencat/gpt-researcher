@@ -97,6 +97,7 @@ async function finish(id: string, path: ResearchEvent & { type: 'path' }) {
     chatMessages: [],
     timestamp: Date.now(),
     brief: { report_type: run.brief.report_type, report_source: run.brief.report_source, tone: run.brief.tone, domains: run.brief.domains },
+    project_id: run.brief.project_id,
   };
   const saved = saveReport(report)
     .then(() => {

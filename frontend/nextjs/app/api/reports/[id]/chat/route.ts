@@ -1,79 +1,34 @@
 import { NextResponse } from 'next/server';
+import { backendBase, forwardHeaders } from '@/lib/backendProxy';
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  const { id } = params;
-  const backendUrl = process.env.NEXT_PUBLIC_GPTR_API_URL || 'http://localhost:8000';
-  
+type Ctx = { params: { id: string } };
+
+export async function GET(request: Request, { params }: Ctx) {
   try {
-    if (!id) {
-      return NextResponse.json(
-        { error: 'Missing report ID parameter' },
-        { status: 400 }
-      );
-    }
-    
-    console.log(`GET /api/reports/${id}/chat - Proxying request to backend`);
-    
-    const response = await fetch(`${backendUrl}/api/reports/${id}/chat`);
-    const data = await response.json();
-    
+    const response = await fetch(`${backendBase()}/api/reports/${encodeURIComponent(params.id)}/chat`, {
+      headers: forwardHeaders(request),
+      cache: 'no-store',
+    });
+    const data = await response.json().catch(() => ({}));
     return NextResponse.json(data, { status: response.status });
-  } catch (error: any) {
-    console.error(`GET /api/reports/${id}/chat - Error proxying to backend:`, error);
-    return NextResponse.json(
-      { error: 'Failed to connect to backend service' },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: 'Failed to connect to backend service' }, { status: 500 });
   }
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  const { id } = params;
-  const backendUrl = process.env.NEXT_PUBLIC_GPTR_API_URL || 'http://localhost:8000';
-  
+export async function POST(request: Request, { params }: Ctx) {
   try {
-    if (!id) {
-      return NextResponse.json(
-        { error: 'Missing report ID parameter' },
-        { status: 400 }
-      );
-    }
-    
-    // Parse the request body
-    let body;
-    try {
-      body = await request.json();
-    } catch (parseError) {
-      console.error('Error parsing request body:', parseError);
-      return NextResponse.json(
-        { error: 'Invalid JSON in request body' },
-        { status: 400 }
-      );
-    }
-    
-    console.log(`POST /api/reports/${id}/chat - Proxying request to backend`);
-    
-    const response = await fetch(`${backendUrl}/api/reports/${id}/chat`, {
+    const body = await request.text();
+    const headers = new Headers(forwardHeaders(request));
+    headers.set('Content-Type', 'application/json');
+    const response = await fetch(`${backendBase()}/api/reports/${encodeURIComponent(params.id)}/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
+      headers,
+      body,
     });
-    
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     return NextResponse.json(data, { status: response.status });
-  } catch (error: any) {
-    console.error(`POST /api/reports/${id}/chat - Error proxying to backend:`, error);
-    return NextResponse.json(
-      { error: 'Failed to connect to backend service' },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: 'Failed to connect to backend service' }, { status: 500 });
   }
-} 
+}
