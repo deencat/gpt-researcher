@@ -14,6 +14,7 @@ def build_custom_prompt(
     *,
     query: str,
     language_directive: str,
+    language_ids: Optional[Sequence[str]] = None,
 ) -> str:
     """Turn playbook structure + instructions into the report custom_prompt.
 
@@ -21,6 +22,7 @@ def build_custom_prompt(
     actions/report_generation.py so playbooks stay first-class without a
     new ReportType for every niche.
     """
+    active = normalize_language_ids(language_ids) if language_ids is not None else []
     lines: List[str] = [
         "You are writing a shippable research brief from the selected playbook — "
         "not a long essay.",
@@ -30,6 +32,16 @@ def build_custom_prompt(
         lines.append(f"Topic focus: {template.topic}.")
     lines.append(f"Research query: {query}")
     lines.append(f"You MUST write the brief in: {language_directive}.")
+    if active:
+        from .languages import language_labels
+
+        labels = language_labels(active)
+        lines.append(f"Active markets for this run only: {', '.join(labels)}.")
+        if len(active) == 1:
+            lines.append(
+                "Do not add other language markets or native labels beyond the "
+                "active market above."
+            )
     lines.append(f"Output format: {template.output_format}.")
 
     if template.instructions:
@@ -101,7 +113,10 @@ def apply_playbook(
         language=language,
         language_ids=langs,
         custom_prompt=build_custom_prompt(
-            template, query=query, language_directive=language
+            template,
+            query=query,
+            language_directive=language,
+            language_ids=langs,
         ),
         report_format=template.report_format,
         total_words=template.total_words,

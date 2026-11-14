@@ -30,9 +30,9 @@ agent_role: >
 
 instructions: |
   Produce a brief a creator can shoot from within ~45 minutes.
-  Always split findings by market when humor, slang, or taboos differ across
-  English, Mainland Mandarin (普通话), Hong Kong Cantonese (粵語), and Taiwan
-  Mandarin (國語).
+  Only cover the active markets listed in the language directive for this run.
+  When multiple markets are active, split findings by market whenever humor,
+  slang, or taboos differ — never collapse Chinese variants into one “Chinese”.
   Prefer concrete examples (named creators, hook formulas, title patterns)
   over generic “be funny” advice.
   Flag platform policy and culture-risk jokes.
