@@ -43,6 +43,10 @@ class Config:
         self.llm_kwargs: Dict[str, Any] = {}
         self.embedding_kwargs: Dict[str, Any] = {}
 
+        # Normalize CURSOR_API_KEY1 / AZURE_OPENAI_GPT52_* ↔ legacy aliases. :-)
+        from gpt_researcher.utils.env_keys import apply_llm_key_aliases
+        apply_llm_key_aliases()
+
         config_to_use = self.load_config(config_path)
         self._set_attributes(config_to_use)
         self._set_embedding_attributes()
