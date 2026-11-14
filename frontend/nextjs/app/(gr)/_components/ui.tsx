@@ -104,13 +104,24 @@ export function Connection() {
   );
 }
 
+function LogoutButton() {
+  return (
+    <a
+      href="/oauth2/sign_out?rd=/"
+      className="inline-flex h-[38px] items-center px-[11px] text-[13.5px] font-medium text-ink-2 transition-colors hover:text-ink"
+    >
+      Log out
+    </a>
+  );
+}
+
 export function TopBar() {
   const current = usePathname();
   const links = useLinks();
   const navItems = [
     { href: links.home, label: 'New research', short: 'New' },
+    { href: links.projects, label: 'Projects', short: 'Projects' },
     { href: links.archive, label: 'Archive', short: 'Archive' },
-    { href: 'https://docs.gptr.dev', label: 'Docs', short: 'Docs' },
   ];
   return (
     <header className="sticky top-0 z-40 grid h-16 grid-cols-[1fr_auto] items-center border-b border-rule-soft bg-paper/90 px-5 backdrop-blur md:grid-cols-[1fr_auto_1fr] md:px-8">
@@ -123,7 +134,7 @@ export function TopBar() {
           <Link
             key={item.href}
             href={item.href}
-            aria-current={current === item.href ? 'page' : undefined}
+            aria-current={current === item.href || (item.href !== '/' && current.startsWith(item.href)) ? 'page' : undefined}
             className="transition-colors hover:text-ink aria-[current=page]:text-ink aria-[current=page]:underline aria-[current=page]:decoration-rubric aria-[current=page]:underline-offset-[22px]"
           >
             {item.label}
@@ -136,7 +147,7 @@ export function TopBar() {
             <Link
               key={item.href}
               href={item.href}
-              aria-current={current === item.href ? 'page' : undefined}
+              aria-current={current === item.href || (item.href !== '/' && current.startsWith(item.href)) ? 'page' : undefined}
               className="aria-[current=page]:text-ink aria-[current=page]:underline aria-[current=page]:decoration-rubric aria-[current=page]:underline-offset-[6px]"
             >
               {item.short}
@@ -145,7 +156,7 @@ export function TopBar() {
         </nav>
         <div className="flex items-center gap-1">
           <SettingsButton />
-          <GitHubStar />
+          <LogoutButton />
         </div>
       </div>
     </header>

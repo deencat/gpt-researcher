@@ -133,6 +133,19 @@ def sanitize_filename(filename: str) -> str:
 
 async def handle_start_command(websocket, data: str, manager):
     json_data = json.loads(data[6:])
+    # Merge playbook template defaults (tone, structure → custom_prompt, languages)
+    try:
+        from gpt_researcher.playbooks import merge_start_payload
+        json_data = merge_start_payload(json_data)
+    except Exception as e:
+        logger.error(f"Playbook merge failed: {e}")
+        await websocket.send_json({
+            "type": "logs",
+            "content": "playbook_error",
+            "output": f"Playbook error: {e}",
+        })
+        return
+
     (
         task,
         report_type,
@@ -146,21 +159,66 @@ async def handle_start_command(websocket, data: str, manager):
         mcp_strategy,
         mcp_configs,
         max_search_results,
+        custom_prompt,
+        language,
+        report_format,
+        total_words,
+        agent_role,
+        playbook_id,
+        project_id,
     ) = extract_command_data(json_data)
 
     if not task or not report_type:
         print("Error: Missing task or report_type")
         return
 
+    # Scope documents + instructions to a Project when provided (Perplexity-style). :-)
+    try:
+        from .auth_user import require_user
+        from .project_store import ProjectStore
+
+        ws_headers = dict(getattr(websocket, "headers", {}) or {})
+        if headers:
+            ws_headers.update(headers)
+        # Starlette headers are a Headers object; normalize.
+        if hasattr(websocket, "headers"):
+            ws_headers.update({k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v for k, v in websocket.headers.items()})
+        user = require_user(headers=ws_headers)
+        if project_id:
+            store = ProjectStore(Path(os.getenv("DATA_ROOT", "data")))
+            project = await store.get_project(user, project_id)
+            if project:
+                docs = store.docs_dir(user, project_id)
+                has_docs = docs.exists() and any(docs.iterdir())
+                if has_docs:
+                    os.environ["DOC_PATH"] = str(docs)
+                if project.get("instructions"):
+                    task = (
+                        "Follow these project instructions for the entire research and report:\n"
+                        f"{project['instructions'].strip()}\n\n"
+                        f"Research question:\n{task}"
+                    )
+                # Never hybrid/local without files — that hard-fails with "Failed to load any documents!". :-)
+                if has_docs and report_source == "web":
+                    report_source = "hybrid"
+                elif not has_docs and report_source in ("hybrid", "local"):
+                    logger.info("Project has no documents; falling back to web research")
+                    report_source = "web"
+    except Exception as e:
+        logger.warning(f"Project context skipped: {e}")
+
     # Create logs handler with websocket and task
     logs_handler = CustomLogsHandler(websocket, task)
     # Initialize log content with query
-    await logs_handler.send_json({
+    init_payload = {
         "query": task,
         "sources": [],
         "context": [],
         "report": ""
-    })
+    }
+    if playbook_id:
+        init_payload["playbook_id"] = playbook_id
+    await logs_handler.send_json(init_payload)
 
     sanitized_filename = sanitize_filename(f"task_{int(time.time())}_{task}")
 
@@ -178,6 +236,12 @@ async def handle_start_command(websocket, data: str, manager):
         mcp_strategy,
         mcp_configs,
         max_search_results,
+        custom_prompt=custom_prompt,
+        language=language,
+        report_format=report_format,
+        total_words=total_words,
+        agent_role=agent_role,
+        playbook_id=playbook_id,
     )
     report = str(report)
     file_paths = await generate_report_files(report, sanitized_filename)
@@ -420,6 +484,7 @@ async def handle_websocket_communication(websocket, manager):
             running_task.cancel()
 
 def extract_command_data(json_data: Dict) -> tuple:
+    playbook_meta = json_data.get("playbook") or {}
     return (
         json_data.get("task"),
         json_data.get("report_type"),
@@ -433,4 +498,11 @@ def extract_command_data(json_data: Dict) -> tuple:
         json_data.get("mcp_strategy", "fast"),
         json_data.get("mcp_configs", []),
         json_data.get("max_search_results"),
+        json_data.get("custom_prompt") or playbook_meta.get("custom_prompt") or "",
+        json_data.get("language") or playbook_meta.get("language"),
+        json_data.get("report_format") or playbook_meta.get("report_format"),
+        json_data.get("total_words") or playbook_meta.get("total_words"),
+        json_data.get("agent_role") or playbook_meta.get("agent_role"),
+        json_data.get("playbook_id") or playbook_meta.get("playbook_id"),
+        json_data.get("project_id"),
     )

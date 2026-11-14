@@ -11,6 +11,21 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      # Multi-provider slots (VPS names; also loaded via env_file). :-)
+      CURSOR_API_KEY1: ${CURSOR_API_KEY1:-}
+      CURSOR_API_KEY2: ${CURSOR_API_KEY2:-}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+      CURSOR_BASE_URL: ${CURSOR_BASE_URL:-}
+      CURSOR_MODEL: ${CURSOR_MODEL:-}
+      AZURE_OPENAI_GPT52_API_KEY: ${AZURE_OPENAI_GPT52_API_KEY:-}
+      AZURE_OPENAI_GPT52_ENDPOINT: ${AZURE_OPENAI_GPT52_ENDPOINT:-}
+      AZURE_OPENAI_GPT52_API_VERSION: ${AZURE_OPENAI_GPT52_API_VERSION:-}
+      AZURE_OPENAI_GPT52_DEPLOYMENT: ${AZURE_OPENAI_GPT52_DEPLOYMENT:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      FAST_LLM: ${FAST_LLM:-}
+      SMART_LLM: ${SMART_LLM:-}
+      STRATEGIC_LLM: ${STRATEGIC_LLM:-}
+      EMBEDDING: ${EMBEDDING:-}
       # Context filtering with TypeSafe's Jev (optional - used when TYPESAFE_API_KEY is set)
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       TYPESAFE_BASE_URL: ${TYPESAFE_BASE_URL:-}
@@ -20,10 +35,13 @@ services:
       IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-false}
       IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-models/gemini-2.5-flash-image}
       IMAGE_GENERATION_MAX_IMAGES: ${IMAGE_GENERATION_MAX_IMAGES:-3}
+      DATA_ROOT: ${DATA_ROOT:-/usr/src/app/data}
+      REPORT_STORE_PATH: ${REPORT_STORE_PATH:-/usr/src/app/data/reports.json}
     volumes:
       - ${PWD}/my-docs:/usr/src/app/my-docs:rw
       - ${PWD}/outputs:/usr/src/app/outputs:rw
       - ${PWD}/logs:/usr/src/app/logs:rw
+      - ${PWD}/data:/usr/src/app/data:rw
     user: root
     restart: always
     ports:
@@ -38,6 +56,8 @@ services:
       LOGGING_LEVEL: INFO
       NEXT_PUBLIC_GA_MEASUREMENT_ID: ${NEXT_PUBLIC_GA_MEASUREMENT_ID}
       NEXT_PUBLIC_GPTR_API_URL: ${NEXT_PUBLIC_GPTR_API_URL}
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://gpt-researcher:8000}
+      GPTR_BACKEND_URL: ${GPTR_BACKEND_URL:-http://gpt-researcher:8000}
     build:
       dockerfile: Dockerfile.dev
       context: frontend/nextjs

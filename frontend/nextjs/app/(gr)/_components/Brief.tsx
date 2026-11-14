@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from 'react';
 import { DEFAULT_BRIEF, type BriefValue } from '@/lib/research/brief';
 import { MCP_PRESETS, checkMcp } from '@/lib/research/mcp';
+import { DEFAULT_PLAYBOOK_LANGUAGES, PLAYBOOK_OPTIONS, playbookLabel } from '@/lib/research/playbooks';
 import { popoverPanel, usePopover } from './popover';
 import { openSettings } from './preferences';
 
@@ -11,6 +12,11 @@ export interface Option {
   label: string;
   hint?: string;
 }
+
+export const PLAYBOOKS: Option[] = [
+  { value: '', label: 'no playbook', hint: 'Free-form research' },
+  ...PLAYBOOK_OPTIONS.map((p) => ({ value: p.id, label: p.name, hint: p.description })),
+];
 
 export const REPORT_TYPES: Option[] = [
   { value: 'research_report', label: 'a summary', hint: 'About 2 minutes, around 1,500 words' },
@@ -54,7 +60,7 @@ export const MCP_STRATEGIES: Option[] = [
 
 export { DEFAULT_BRIEF, type BriefValue };
 
-export type BriefField = 'report_type' | 'report_source' | 'tone' | 'domains';
+export type BriefField = 'report_type' | 'report_source' | 'tone' | 'domains' | 'playbook_id';
 
 function Choice({
   label,
@@ -263,6 +269,22 @@ export default function Brief({
   documents?: number;
 }) {
   const set = (key: 'report_type' | 'report_source' | 'tone') => (v: string) => onChange({ ...value, [key]: v });
+  const setPlaybook = (playbook_id: string) => {
+    if (!playbook_id) {
+      onChange({ ...value, playbook_id: '', language_ids: [] });
+      return;
+    }
+    const next: BriefValue = {
+      ...value,
+      playbook_id,
+      language_ids: value.language_ids.length ? value.language_ids : [...DEFAULT_PLAYBOOK_LANGUAGES],
+    };
+    if (playbook_id === 'comedy_shorts') {
+      next.tone = 'Humorous';
+      next.report_type = 'research_report';
+    }
+    onChange(next);
+  };
   const article = /^[aeiou]/i.test(value.tone) ? 'an' : 'a';
   const readsWeb = value.report_source !== 'local';
   const readsDocs = value.report_source !== 'web';
@@ -276,11 +298,18 @@ export default function Brief({
         in {article} <Choice label="Tone" options={TONES} value={value.tone} onChange={set('tone')} defaultOpen={openField === 'tone'} /> tone
         {readsWeb ? (
           <>
-            , reading <Sites value={value.domains} onChange={(domains) => onChange({ ...value, domains })} defaultOpen={openField === 'domains'} />.
+            , reading <Sites value={value.domains} onChange={(domains) => onChange({ ...value, domains })} defaultOpen={openField === 'domains'} />
           </>
-        ) : (
-          '.'
-        )}
+        ) : null}
+        , using{' '}
+        <Choice
+          label="Playbook"
+          options={PLAYBOOKS}
+          value={value.playbook_id || ''}
+          onChange={setPlaybook}
+          defaultOpen={openField === 'playbook_id'}
+        />
+        {value.playbook_id ? ` (${playbookLabel(value.playbook_id)})` : ''}.
         <McpClause value={value} />
       </div>
       {readsDocs && documents !== undefined && (

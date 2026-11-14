@@ -33,12 +33,12 @@ function load() {
   }
 }
 
-export function setBrief(next: BriefValue) {
+export function setBrief(next: BriefValue | ((prev: BriefValue) => BriefValue)) {
   load();
-  brief = next;
+  brief = typeof next === 'function' ? next(brief) : next;
   if (persists()) {
     try {
-      localStorage.setItem(BRIEF_KEY, JSON.stringify(next));
+      localStorage.setItem(BRIEF_KEY, JSON.stringify(brief));
     } catch {
       // Private mode or a full quota: the brief still applies for this visit.
     }

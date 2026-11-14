@@ -45,6 +45,10 @@ _SUPPORTED_PROVIDERS = {
     "minimax_anthropic",
     "atlascloud",
     "nebius",
+    # Cursor slots: CURSOR_API_KEY1 / CURSOR_API_KEY2 via OpenAI-compatible bridge :-)
+    "cursor",
+    "cursor1",
+    "cursor2",
 }
 
 NO_SUPPORT_TEMPERATURE_MODELS = [
@@ -224,10 +228,32 @@ class GenericLLMProvider:
         elif provider == "azure_openai":
             _check_pkg("langchain_openai")
             from langchain_openai import AzureChatOpenAI
+            from gpt_researcher.utils.env_keys import (
+                azure_gpt52_api_key,
+                first_env,
+            )
 
             if "model" in kwargs:
                 model_name = kwargs.get("model", None)
                 kwargs = {"azure_deployment": model_name, **kwargs}
+
+            # Prefer AZURE_OPENAI_GPT52_* (VPS / Asus) over generic Azure vars. :-)
+            kwargs.setdefault("api_key", azure_gpt52_api_key())
+            endpoint = first_env(
+                "AZURE_OPENAI_GPT52_ENDPOINT", "AZURE_OPENAI_ENDPOINT"
+            )
+            if endpoint:
+                kwargs.setdefault("azure_endpoint", endpoint)
+            api_version = first_env(
+                "AZURE_OPENAI_GPT52_API_VERSION",
+                "AZURE_OPENAI_API_VERSION",
+                "OPENAI_API_VERSION",
+            )
+            if api_version:
+                kwargs.setdefault("api_version", api_version)
+            deployment = first_env("AZURE_OPENAI_GPT52_DEPLOYMENT")
+            if deployment and "azure_deployment" not in kwargs:
+                kwargs["azure_deployment"] = deployment
 
             llm = AzureChatOpenAI(**kwargs)
         elif provider == "cohere":
@@ -340,6 +366,7 @@ class GenericLLMProvider:
             _check_pkg("langchain_openai")
             from langchain_openai import ChatOpenAI
             from langchain_core.rate_limiters import InMemoryRateLimiter
+            from gpt_researcher.utils.env_keys import openrouter_api_key
 
             rps = float(os.environ["OPENROUTER_LIMIT_RPS"]) if "OPENROUTER_LIMIT_RPS" in os.environ else 1.0
 
@@ -351,10 +378,35 @@ class GenericLLMProvider:
 
             llm = ChatOpenAI(openai_api_base='https://openrouter.ai/api/v1',
                      request_timeout=180,
-                     openai_api_key=os.environ["OPENROUTER_API_KEY"],
+                     openai_api_key=openrouter_api_key(),
                      rate_limiter=rate_limiter,
                      **kwargs
                 )
+        elif provider in ("cursor", "cursor1", "cursor2"):
+            # Cursor has no public chat-completions API; point CURSOR_BASE_URL at
+            # an OpenAI-compatible bridge and use CURSOR_API_KEY1 / KEY2. :-)
+            _check_pkg("langchain_openai")
+            from langchain_openai import ChatOpenAI
+            from gpt_researcher.utils.env_keys import cursor_api_key, first_env
+
+            slot = 2 if provider == "cursor2" else 1
+            base_url = first_env("CURSOR_BASE_URL")
+            if not base_url:
+                raise ValueError(
+                    "cursor1/cursor2 require CURSOR_BASE_URL pointing at an "
+                    "OpenAI-compatible Cursor bridge (for example "
+                    "http://host.docker.internal:8787/v1). "
+                    "Until that bridge is running, set FAST_LLM/SMART_LLM to "
+                    "openrouter:... or azure_openai:... instead."
+                )
+            if "model" not in kwargs and "model_name" not in kwargs:
+                kwargs["model"] = first_env("CURSOR_MODEL") or "composer-2.5"
+            llm = ChatOpenAI(
+                openai_api_base=base_url.rstrip("/"),
+                openai_api_key=cursor_api_key(slot),
+                request_timeout=180,
+                **kwargs,
+            )
         elif provider == "vllm_openai":
             _check_pkg("langchain_openai")
             from langchain_openai import ChatOpenAI
