@@ -15,6 +15,7 @@ import { listReports, summarize, type ReportRow } from '@/lib/research/reports';
 import { DEFAULT_BRIEF, type BriefValue } from '@/lib/research/brief';
 import { useBrief } from './preferences';
 import { useLinks } from './mode';
+import ProjectSetupCoach from './ProjectSetupCoach';
 import { Eye } from './ui';
 
 export default function ProjectDetailScreen({ projectId }: { projectId: string }) {
@@ -30,6 +31,10 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
+  const [coachOpen, setCoachOpen] = useState(false);
+  const [coachDismissed, setCoachDismissed] = useState(false);
+  const [starterPrompts, setStarterPrompts] = useState<string[]>([]);
+  const [documentIdeas, setDocumentIdeas] = useState<string[]>([]);
 
   const refresh = async () => {
     setStatus('loading');
@@ -45,6 +50,8 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
       setInstructions(next.instructions || '');
       const reports = await listReports();
       setRows(reports.filter((r) => r.project_id === projectId).map(summarize));
+      const empty = !next.description?.trim() && !next.instructions?.trim();
+      if (empty && !coachDismissed) setCoachOpen(true);
       setStatus('ready');
     } catch {
       setStatus('error');
@@ -53,15 +60,23 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
 
   useEffect(() => {
     void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when project id changes
   }, [projectId]);
 
-  const save = async () => {
+  const save = async (override?: { description?: string; instructions?: string; name?: string }) => {
     if (!project || saving) return;
     setSaving(true);
     setNote('');
     try {
-      const next = await updateProject(project.id, { name, description, instructions });
+      const next = await updateProject(project.id, {
+        name: override?.name ?? name,
+        description: override?.description ?? description,
+        instructions: override?.instructions ?? instructions,
+      });
       setProject(next);
+      setName(next.name);
+      setDescription(next.description || '');
+      setInstructions(next.instructions || '');
       setNote('Saved.');
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -90,14 +105,16 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
     await refresh();
   };
 
-  const researchHere = () => {
+  const researchHere = (question?: string) => {
     const brief: BriefValue = {
       ...DEFAULT_BRIEF,
       project_id: projectId,
       report_source: (project?.documents.length ?? 0) > 0 ? 'hybrid' : 'web',
     };
     setBrief(brief);
-    router.push(`${links.home}?project=${encodeURIComponent(projectId)}`);
+    const params = new URLSearchParams({ project: projectId });
+    if (question?.trim()) params.set('q', question.trim());
+    router.push(`${links.home}?${params.toString()}`);
   };
 
   const remove = async () => {
@@ -130,6 +147,8 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
     );
   }
 
+  const needsSetup = !description.trim() || !instructions.trim();
+
   return (
     <main className="mx-auto w-full max-w-[920px] px-5 pb-24 pt-10 md:px-8">
       <Link href={links.projects} className="text-[13.5px] text-ink-2 hover:text-ink">
@@ -143,7 +162,7 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
           className="w-full border-0 bg-transparent font-display text-[34px] font-medium tracking-[-0.02em] outline-none sm:text-[40px]"
         />
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="gr-btn h-10 px-4" onClick={researchHere}>
+          <button type="button" className="gr-btn h-10 px-4" onClick={() => researchHere()}>
             Research in project
           </button>
           <button type="button" className="gr-btn-line h-10 px-4" disabled={saving} onClick={() => void save()}>
@@ -152,12 +171,46 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
         </div>
       </div>
 
+      {needsSetup && !coachOpen && (
+        <p className="mt-5 text-[14px] text-ink-2">
+          Only a title so far.{' '}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => {
+              setCoachDismissed(false);
+              setCoachOpen(true);
+            }}
+          >
+            Answer a few questions to draft description & instructions
+          </button>
+          .
+        </p>
+      )}
+
+      <ProjectSetupCoach
+        title={name}
+        open={coachOpen}
+        onClose={() => {
+          setCoachOpen(false);
+          setCoachDismissed(true);
+        }}
+        onApply={(draft) => {
+          setDescription(draft.description);
+          setInstructions(draft.instructions);
+          setStarterPrompts(draft.researchPrompts);
+          setDocumentIdeas(draft.documentIdeas);
+          void save({ description: draft.description, instructions: draft.instructions, name });
+          setNote('Draft applied and saved. Next: add documents, then run a starter research prompt.');
+        }}
+      />
+
       <label className="mt-8 block text-[13px] font-medium text-ink-2">
         Description
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          rows={2}
+          rows={3}
           className="mt-2 w-full border border-rule-soft bg-transparent px-3 py-2 text-[14.5px] outline-none focus:border-ink"
           placeholder="What this project is for"
         />
@@ -165,16 +218,24 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
 
       <label className="mt-6 block text-[13px] font-medium text-ink-2">
         System instructions
-        <span className="mt-1 block font-normal text-ink-3">Applied to every research run in this project (like Perplexity Project instructions).</span>
+        <span className="mt-1 block font-normal text-ink-3">
+          Applied to every research run in this project (like Perplexity Project instructions).
+        </span>
         <textarea
           value={instructions}
           onChange={(e) => setInstructions(e.target.value)}
-          rows={6}
+          rows={8}
           maxLength={8000}
           className="mt-2 w-full border border-rule-soft bg-transparent px-3 py-2 font-code text-[13px] outline-none focus:border-ink"
           placeholder={'e.g. Always cite sources. Prefer SEC filings. Write for an investor audience.'}
         />
       </label>
+
+      {!needsSetup && (
+        <button type="button" className="mt-3 text-[13px] text-ink-2 underline hover:text-ink" onClick={() => setCoachOpen(true)}>
+          Re-run setup questions
+        </button>
+      )}
 
       <section className="mt-10">
         <div className="flex items-center justify-between gap-4">
@@ -185,7 +246,16 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
           <input ref={picker} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
         </div>
         {project.documents.length === 0 ? (
-          <p className="mt-4 text-[14px] text-ink-3">No documents yet. Uploads stay private to your account and this project.</p>
+          <div className="mt-4 text-[14px] text-ink-3">
+            <p>No documents yet. Uploads stay private to your account and this project.</p>
+            {documentIdeas.length > 0 && (
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-[13.5px]">
+                {documentIdeas.map((idea) => (
+                  <li key={idea}>{idea}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         ) : (
           <ul className="mt-4 divide-y divide-rule-soft border-t border-rule-soft">
             {project.documents.map((filename) => (
@@ -200,10 +270,27 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
         )}
       </section>
 
+      {starterPrompts.length > 0 && (
+        <section className="mt-12">
+          <h2 className="text-[15px] font-semibold">Suggested next research</h2>
+          <p className="mt-2 text-[13.5px] text-ink-3">Slowly build the library — run one prompt at a time.</p>
+          <ul className="mt-4 divide-y divide-rule-soft border-t border-rule-soft">
+            {starterPrompts.map((prompt) => (
+              <li key={prompt} className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[14.5px] leading-snug">{prompt}</p>
+                <button type="button" className="gr-btn-line h-9 shrink-0 px-3 text-[13px]" onClick={() => researchHere(prompt)}>
+                  Research this
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="mt-12">
         <h2 className="text-[15px] font-semibold">Research in this project</h2>
         {rows.length === 0 ? (
-          <p className="mt-4 text-[14px] text-ink-3">No runs yet. Start one with “Research in project”.</p>
+          <p className="mt-4 text-[14px] text-ink-3">No runs yet. Start one with “Research in project” or a suggested prompt.</p>
         ) : (
           <ul className="mt-4 divide-y divide-rule-soft border-t border-rule-soft">
             {rows.map((row) => (

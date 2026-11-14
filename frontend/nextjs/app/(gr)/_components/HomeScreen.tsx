@@ -56,7 +56,10 @@ export default function HomeScreen({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const projectId = new URLSearchParams(window.location.search).get('project');
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get('project');
+    const q = params.get('q');
+    if (q?.trim() && !question.trim()) setQuestion(q.trim());
     if (!projectId) return;
     setBrief({
       ...brief,
@@ -64,7 +67,7 @@ export default function HomeScreen({
       report_source: brief.report_source === 'web' ? 'hybrid' : brief.report_source,
     });
     void getProject(projectId).then((p) => p && setProjectName(p.name));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only apply ?project= once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only apply ?project= / ?q= once on mount
   }, []);
 
   const addFiles = (list: FileList | null) => {
