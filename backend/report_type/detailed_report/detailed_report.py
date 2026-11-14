@@ -25,6 +25,11 @@ class DetailedReport:
         mcp_configs=None,
         mcp_strategy=None,
         max_search_results=None,
+        custom_prompt: str = "",
+        language: str | None = None,
+        report_format: str | None = None,
+        total_words: int | None = None,
+        agent_role: str | None = None,
     ):
         self.query = query
         self.report_type = report_type
@@ -39,6 +44,7 @@ class DetailedReport:
         self.headers = headers or {}
         self.complement_source_urls = complement_source_urls
         self.max_search_results = max_search_results
+        self.custom_prompt = custom_prompt or ""
         
         # Generate a unique research ID for this report
         self.research_id = self._generate_research_id(query)
@@ -69,6 +75,16 @@ class DetailedReport:
         # Override max_search_results_per_query if provided by user
         if max_search_results is not None:
             self.gpt_researcher.cfg.max_search_results_per_query = int(max_search_results)
+
+        if language:
+            self.gpt_researcher.cfg.language = language
+        if report_format:
+            self.gpt_researcher.cfg.report_format = report_format
+        if total_words is not None:
+            self.gpt_researcher.cfg.total_words = int(total_words)
+        if agent_role:
+            self.gpt_researcher.agent = agent_role
+            self.gpt_researcher.role = agent_role
         self.existing_headers: List[Dict] = []
         self.global_context: List[str] = []
         self.global_written_sections: List[str] = []
