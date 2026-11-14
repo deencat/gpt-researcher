@@ -22,6 +22,11 @@ class BasicReport:
         mcp_configs=None,
         mcp_strategy=None,
         max_search_results=None,
+        custom_prompt: str = "",
+        language: str | None = None,
+        report_format: str | None = None,
+        total_words: int | None = None,
+        agent_role: str | None = None,
     ):
         self.query = query
         self.query_domains = query_domains
@@ -33,6 +38,7 @@ class BasicReport:
         self.config_path = config_path
         self.websocket = websocket
         self.headers = headers or {}
+        self.custom_prompt = custom_prompt or ""
         
         # Generate a unique research ID for this report
         self.research_id = self._generate_research_id(query)
@@ -63,6 +69,17 @@ class BasicReport:
         if max_search_results is not None:
             self.gpt_researcher.cfg.max_search_results_per_query = int(max_search_results)
 
+        # Playbook / request overrides for language, format, role
+        if language:
+            self.gpt_researcher.cfg.language = language
+        if report_format:
+            self.gpt_researcher.cfg.report_format = report_format
+        if total_words is not None:
+            self.gpt_researcher.cfg.total_words = int(total_words)
+        if agent_role:
+            self.gpt_researcher.agent = agent_role
+            self.gpt_researcher.role = agent_role
+
     def _generate_research_id(self, query: str) -> str:
         """Generate a unique research ID from query and timestamp."""
         timestamp = str(int(time.time()))
@@ -71,5 +88,5 @@ class BasicReport:
 
     async def run(self):
         await self.gpt_researcher.conduct_research()
-        report = await self.gpt_researcher.write_report()
+        report = await self.gpt_researcher.write_report(custom_prompt=self.custom_prompt)
         return report
