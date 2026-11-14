@@ -61,12 +61,17 @@ export default function HomeScreen({
     const q = params.get('q');
     if (q?.trim() && !question.trim()) setQuestion(q.trim());
     if (!projectId) return;
-    setBrief({
-      ...brief,
-      project_id: projectId,
-      report_source: brief.report_source === 'web' ? 'hybrid' : brief.report_source,
+    void getProject(projectId).then((p) => {
+      if (!p) return;
+      setProjectName(p.name);
+      // Hybrid only when the project actually has documents; empty projects stay on web. :-)
+      const hasDocs = (p.documents?.length ?? 0) > 0;
+      setBrief({
+        ...brief,
+        project_id: projectId,
+        report_source: hasDocs ? 'hybrid' : 'web',
+      });
     });
-    void getProject(projectId).then((p) => p && setProjectName(p.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only apply ?project= / ?q= once on mount
   }, []);
 

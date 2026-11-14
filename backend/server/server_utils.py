@@ -170,15 +170,21 @@ async def handle_start_command(websocket, data: str, manager):
             project = await store.get_project(user, project_id)
             if project:
                 docs = store.docs_dir(user, project_id)
-                os.environ["DOC_PATH"] = str(docs)
+                has_docs = docs.exists() and any(docs.iterdir())
+                if has_docs:
+                    os.environ["DOC_PATH"] = str(docs)
                 if project.get("instructions"):
                     task = (
                         "Follow these project instructions for the entire research and report:\n"
                         f"{project['instructions'].strip()}\n\n"
                         f"Research question:\n{task}"
                     )
-                if report_source == "web" and any(docs.iterdir()):
+                # Never hybrid/local without files — that hard-fails with "Failed to load any documents!". :-)
+                if has_docs and report_source == "web":
                     report_source = "hybrid"
+                elif not has_docs and report_source in ("hybrid", "local"):
+                    logger.info("Project has no documents; falling back to web research")
+                    report_source = "web"
     except Exception as e:
         logger.warning(f"Project context skipped: {e}")
 
