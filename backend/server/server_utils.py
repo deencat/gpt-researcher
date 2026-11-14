@@ -133,6 +133,19 @@ def sanitize_filename(filename: str) -> str:
 
 async def handle_start_command(websocket, data: str, manager):
     json_data = json.loads(data[6:])
+    # Merge playbook template defaults (tone, structure → custom_prompt, languages)
+    try:
+        from gpt_researcher.playbooks import merge_start_payload
+        json_data = merge_start_payload(json_data)
+    except Exception as e:
+        logger.error(f"Playbook merge failed: {e}")
+        await websocket.send_json({
+            "type": "logs",
+            "content": "playbook_error",
+            "output": f"Playbook error: {e}",
+        })
+        return
+
     (
         task,
         report_type,
@@ -146,6 +159,12 @@ async def handle_start_command(websocket, data: str, manager):
         mcp_strategy,
         mcp_configs,
         max_search_results,
+        custom_prompt,
+        language,
+        report_format,
+        total_words,
+        agent_role,
+        playbook_id,
     ) = extract_command_data(json_data)
 
     if not task or not report_type:
@@ -155,12 +174,15 @@ async def handle_start_command(websocket, data: str, manager):
     # Create logs handler with websocket and task
     logs_handler = CustomLogsHandler(websocket, task)
     # Initialize log content with query
-    await logs_handler.send_json({
+    init_payload = {
         "query": task,
         "sources": [],
         "context": [],
         "report": ""
-    })
+    }
+    if playbook_id:
+        init_payload["playbook_id"] = playbook_id
+    await logs_handler.send_json(init_payload)
 
     sanitized_filename = sanitize_filename(f"task_{int(time.time())}_{task}")
 
@@ -178,6 +200,12 @@ async def handle_start_command(websocket, data: str, manager):
         mcp_strategy,
         mcp_configs,
         max_search_results,
+        custom_prompt=custom_prompt,
+        language=language,
+        report_format=report_format,
+        total_words=total_words,
+        agent_role=agent_role,
+        playbook_id=playbook_id,
     )
     report = str(report)
     file_paths = await generate_report_files(report, sanitized_filename)
@@ -420,6 +448,7 @@ async def handle_websocket_communication(websocket, manager):
             running_task.cancel()
 
 def extract_command_data(json_data: Dict) -> tuple:
+    playbook_meta = json_data.get("playbook") or {}
     return (
         json_data.get("task"),
         json_data.get("report_type"),
@@ -433,4 +462,10 @@ def extract_command_data(json_data: Dict) -> tuple:
         json_data.get("mcp_strategy", "fast"),
         json_data.get("mcp_configs", []),
         json_data.get("max_search_results"),
+        json_data.get("custom_prompt") or playbook_meta.get("custom_prompt") or "",
+        json_data.get("language") or playbook_meta.get("language"),
+        json_data.get("report_format") or playbook_meta.get("report_format"),
+        json_data.get("total_words") or playbook_meta.get("total_words"),
+        json_data.get("agent_role") or playbook_meta.get("agent_role"),
+        json_data.get("playbook_id") or playbook_meta.get("playbook_id"),
     )

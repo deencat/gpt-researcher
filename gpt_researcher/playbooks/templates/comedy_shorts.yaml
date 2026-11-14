@@ -1,0 +1,94 @@
+# Comedy shorts research pack — first concrete Hexsenses playbook.
+# Used by the salon / multilingual funny-shorts proof path in
+# docs/hexsenses-first-100-plan.md
+id: comedy_shorts
+name: Comedy shorts research pack
+description: >
+  Shippable briefs for multilingual funny short-form video — hooks, titles,
+  script outlines, and source notes. Built for beauty/salon and creator
+  channels that need English + 普通话 + 粵語 + 國語 without collapsing them.
+topic: >
+  Multilingual funny / marketing short-form video for beauty salon and
+  lifestyle creators (YouTube Shorts, Reels, TikTok / Douyin)
+tone: Humorous
+report_type: research_report
+report_source: web
+report_format: markdown
+total_words: 900
+output_format: markdown_brief
+
+languages:
+  - en
+  - zh-cn
+  - zh-yue
+  - zh-tw
+
+agent_role: >
+  You are a senior short-form comedy researcher for multilingual beauty and
+  lifestyle creators. You turn web research into shootable briefs — hooks,
+  titles, beat sheets, and culture notes — not academic essays.
+
+instructions: |
+  Produce a brief a creator can shoot from within ~45 minutes.
+  Always split findings by market when humor, slang, or taboos differ across
+  English, Mainland Mandarin (普通话), Hong Kong Cantonese (粵語), and Taiwan
+  Mandarin (國語).
+  Prefer concrete examples (named creators, hook formulas, title patterns)
+  over generic “be funny” advice.
+  Flag platform policy and culture-risk jokes.
+  End with what to research or upload next into the Project.
+
+structure:
+  - id: title_options
+    title: Title options
+    instruction: >
+      5–8 title / packaging options, tagged by language/market when needed.
+  - id: hooks
+    title: Hooks
+    instruction: >
+      5 cold-open / first-3-second hooks with why each works for the market.
+  - id: script_outline
+    title: Script outline
+    instruction: >
+      One shootable short outline (hook → beats → punch → CTA), ~30–60 seconds.
+  - id: language_notes
+    title: Language & culture notes
+    instruction: >
+      Slang, tone, taboos, and what travels vs stays local across the markets.
+  - id: sources
+    title: Sources
+    instruction: >
+      Cited references and creator/channel examples with links when available.
+  - id: next_actions
+    title: Next actions
+    instruction: >
+      Docs to upload, creators to watch, and the next research prompt to run.
+
+starter_prompts:
+  - >
+    Trending funny beauty / salon short-form angles this week for English,
+    Mainland Mandarin, Hong Kong Cantonese, and Taiwan Mandarin audiences
+  - >
+    Competitor hooks and cold opens that work for beauty comedy shorts —
+    separate by market and explain why each lands
+  - >
+    Weekly review pack — what comedy short patterns are working vs flopping
+    for multilingual beauty creators, with 5 next hooks to test
+
+project_defaults:
+  goal: >
+    Build a living research library for multilingual funny beauty/salon
+    shorts — hooks, structures, culture notes, and packaging ideas.
+  formats:
+    - shorts
+    - youtube
+    - script
+  materials:
+    - hooks
+    - structures
+    - trends
+    - creators
+    - culture
+    - dialect
+    - packaging
+    - pipeline

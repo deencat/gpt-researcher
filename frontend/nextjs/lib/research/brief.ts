@@ -1,4 +1,5 @@
 import { mcpServers } from './mcp';
+import { DEFAULT_PLAYBOOK_LANGUAGES, PLAYBOOK_VALUES } from './playbooks';
 
 /** What the user asks the backend to write, as chosen on the home screen or in Settings. */
 export interface BriefValue {
@@ -10,6 +11,10 @@ export interface BriefValue {
   mcp_strategy: string;
   /** The MCP server list as typed, a JSON array. */
   mcp_configs: string;
+  /** Optional bundled playbook id (e.g. comedy_shorts). */
+  playbook_id: string;
+  /** Language ids from gpt_researcher.playbooks.languages when a playbook is set. */
+  language_ids: string[];
 }
 
 export const DEFAULT_BRIEF: BriefValue = {
@@ -20,6 +25,8 @@ export const DEFAULT_BRIEF: BriefValue = {
   mcp_enabled: false,
   mcp_strategy: 'fast',
   mcp_configs: '',
+  playbook_id: '',
+  language_ids: [],
 };
 
 export const REPORT_TYPE_VALUES = ['research_report', 'detailed_report', 'deep', 'multi_agents'];
@@ -60,6 +67,12 @@ const oneOf = (value: unknown, allowed: string[], fallback: string) => (typeof v
 /** A brief read back from storage, with anything unknown or malformed replaced by the default. */
 export function parseBrief(raw: unknown): BriefValue {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const playbook_id = oneOf(r.playbook_id, PLAYBOOK_VALUES, DEFAULT_BRIEF.playbook_id);
+  const language_ids = Array.isArray(r.language_ids)
+    ? r.language_ids.filter((d): d is string => typeof d === 'string' && d.length > 0)
+    : playbook_id
+      ? [...DEFAULT_PLAYBOOK_LANGUAGES]
+      : [];
   return {
     report_type: oneOf(r.report_type, REPORT_TYPE_VALUES, DEFAULT_BRIEF.report_type),
     report_source: oneOf(r.report_source, SOURCE_VALUES, DEFAULT_BRIEF.report_source),
@@ -68,6 +81,8 @@ export function parseBrief(raw: unknown): BriefValue {
     mcp_enabled: r.mcp_enabled === true,
     mcp_strategy: oneOf(r.mcp_strategy, MCP_STRATEGY_VALUES, DEFAULT_BRIEF.mcp_strategy),
     mcp_configs: typeof r.mcp_configs === 'string' ? r.mcp_configs : '',
+    playbook_id,
+    language_ids,
   };
 }
 
@@ -83,4 +98,10 @@ export const startPayload = (task: string, brief: BriefValue) => ({
   mcp_enabled: brief.mcp_enabled,
   mcp_strategy: brief.mcp_strategy,
   mcp_configs: brief.mcp_enabled ? mcpServers(brief.mcp_configs) : [],
+  ...(brief.playbook_id
+    ? {
+        playbook_id: brief.playbook_id,
+        language_ids: brief.language_ids.length ? brief.language_ids : [...DEFAULT_PLAYBOOK_LANGUAGES],
+      }
+    : {}),
 });

@@ -180,6 +180,28 @@ async def read_report(request: Request, research_id: str):
 
 
 # Simplified API routes - no database persistence
+@app.get("/api/playbooks")
+async def list_playbooks_api():
+    """List bundled research playbook templates."""
+    from gpt_researcher.playbooks import catalog_public, list_playbooks
+
+    return {
+        "playbooks": [p.to_public_dict() for p in list_playbooks()],
+        "languages": catalog_public(),
+    }
+
+
+@app.get("/api/playbooks/{playbook_id}")
+async def get_playbook_api(playbook_id: str):
+    """Return one playbook template by id."""
+    from gpt_researcher.playbooks import PlaybookNotFoundError, get_playbook
+
+    try:
+        return get_playbook(playbook_id).to_public_dict()
+    except PlaybookNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Playbook not found: {playbook_id}")
+
+
 @app.get("/api/reports")
 async def get_all_reports(report_ids: str = None):
     report_ids_list = report_ids.split(",") if report_ids else None
