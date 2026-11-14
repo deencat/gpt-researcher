@@ -110,14 +110,21 @@ class Memory:
                 _embeddings = OpenAIEmbeddings(model=model, **embedding_kwargs)
             case "azure_openai":
                 from langchain_openai import AzureOpenAIEmbeddings
+                from gpt_researcher.utils.env_keys import (
+                    azure_gpt52_api_key,
+                    first_env,
+                )
 
                 _embeddings = AzureOpenAIEmbeddings(
                     model=model,
-                    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-                    openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
-                    openai_api_version=os.environ.get(
+                    azure_endpoint=first_env(
+                        "AZURE_OPENAI_GPT52_ENDPOINT", "AZURE_OPENAI_ENDPOINT"
+                    ),
+                    openai_api_key=azure_gpt52_api_key(),
+                    openai_api_version=first_env(
+                        "AZURE_OPENAI_GPT52_API_VERSION",
                         "AZURE_OPENAI_API_VERSION",
-                        os.environ.get("OPENAI_API_VERSION"),
+                        "OPENAI_API_VERSION",
                     ),
                     **embedding_kwargs,
                 )
@@ -198,10 +205,11 @@ class Memory:
                 )
             case "openrouter":
                 from langchain_openai import OpenAIEmbeddings
+                from gpt_researcher.utils.env_keys import openrouter_api_key
 
                 _embeddings = OpenAIEmbeddings(
                     model=model,
-                    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+                    openai_api_key=openrouter_api_key(),
                     openai_api_base="https://openrouter.ai/api/v1",
                     **embedding_kwargs,
                 )

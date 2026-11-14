@@ -23,6 +23,8 @@ from ..prompts import PromptFamily
 from .costs import calculate_llm_cost
 from .validators import Subtopics
 
+logger = logging.getLogger(__name__)
+
 
 def get_llm(llm_provider: str, **kwargs):
     """Get an LLM provider instance.
@@ -38,63 +40,70 @@ def get_llm(llm_provider: str, **kwargs):
     return GenericLLMProvider.from_provider(llm_provider, **kwargs)
 
 
-async def create_chat_completion(
-        messages: list[dict[str, str]],
-        model: str | None = None,
-        temperature: float | None = 0.4,
-        max_tokens: int | None = 4000,
-        llm_provider: str | None = None,
-        stream: bool = False,
-        websocket: Any | None = None,
-        llm_kwargs: dict[str, Any] | None = None,
-        cost_callback: callable = None,
-        reasoning_effort: str | None = ReasoningEfforts.Medium.value,
-        **kwargs
-) -> str:
-    """Create a chat completion using the OpenAI API
-    Args:
-        messages (list[dict[str, str]]): The messages to send to the chat completion.
-        model (str, optional): The model to use. Defaults to None.
-        temperature (float, optional): The temperature to use. Defaults to 0.4.
-        max_tokens (int, optional): The max tokens to use. Defaults to 4000.
-        llm_provider (str, optional): The LLM Provider to use.
-        stream (bool): Whether to stream the response. Defaults to False.
-        websocket (WebSocket): The websocket used in the current request,
-        llm_kwargs (dict[str, Any], optional): Additional LLM keyword arguments. Defaults to None.
-        cost_callback: Callback function for updating cost.
-        reasoning_effort (str, optional): Reasoning effort for OpenAI's reasoning models. Defaults to 'low'.
-        **kwargs: Additional keyword arguments.
-    Returns:
-        str: The response from the chat completion.
-    """
-    # validate input
-    if model is None:
-        raise ValueError("Model cannot be None")
-    # Sanity guard against absurd values (e.g., env var typos). The actual
-    # per-model output limits are enforced by the upstream provider.
-    if max_tokens is not None and max_tokens > 200_000:
+def parse_llm_spec(spec: str) -> tuple[str, str]:
+    """Parse ``provider:model`` into ``(provider, model)``. :-)"""
+    if not spec or ":" not in spec:
         raise ValueError(
-            f"max_tokens={max_tokens} exceeds the largest output limit of "
-            "any currently available model (128k as of late 2025). "
-            "Check your FAST_TOKEN_LIMIT / SMART_TOKEN_LIMIT / "
-            "STRATEGIC_TOKEN_LIMIT env vars for typos."
+            "LLM spec must be '<provider>:<model>', "
+            "e.g. 'openrouter:google/gemini-2.5-flash'"
         )
+    provider, model = spec.split(":", 1)
+    provider, model = provider.strip(), model.strip()
+    if not provider or not model:
+        raise ValueError(f"Invalid LLM spec: {spec!r}")
+    return provider, model
 
-    # Get the provider from supported providers
-    provider_kwargs = {'model': model}
+
+def resolve_fast_fallback(
+    primary_provider: str | None,
+    primary_model: str | None,
+    explicit_fallback: str | None = None,
+) -> str | None:
+    """Return Fast-slot fallback spec when this call is the Fast primary. :-)
+
+    ``FAST_LLM_FALLBACK`` only applies when the request matches ``FAST_LLM``.
+    Explicit ``fallback_llm`` always wins when provided.
+    """
+    if explicit_fallback and str(explicit_fallback).strip():
+        return str(explicit_fallback).strip()
+    fallback = (os.environ.get("FAST_LLM_FALLBACK") or "").strip()
+    if not fallback:
+        return None
+    fast = (os.environ.get("FAST_LLM") or "").strip()
+    if not fast:
+        return None
+    try:
+        fast_provider, fast_model = parse_llm_spec(fast)
+    except ValueError:
+        return None
+    if primary_provider == fast_provider and primary_model == fast_model:
+        return fallback
+    return None
+
+
+def _build_provider_kwargs(
+    *,
+    model: str,
+    temperature: float | None,
+    max_tokens: int | None,
+    llm_provider: str | None,
+    llm_kwargs: dict[str, Any] | None,
+    reasoning_effort: str | None,
+) -> dict[str, Any]:
+    provider_kwargs: dict[str, Any] = {"model": model}
 
     if model in SUPPORT_REASONING_EFFORT_MODELS:
-        provider_kwargs['reasoning_effort'] = reasoning_effort
+        provider_kwargs["reasoning_effort"] = reasoning_effort
 
     if supports_temperature(model):
-        provider_kwargs['temperature'] = temperature
+        provider_kwargs["temperature"] = temperature
     else:
         # These models enforce their default temperature, but output limits
         # still apply (langchain-openai maps max_tokens to the API's
         # max_completion_tokens). Note that for reasoning models the limit
         # covers reasoning tokens too, so budgets need extra headroom.
-        provider_kwargs['temperature'] = None
-    provider_kwargs['max_tokens'] = max_tokens
+        provider_kwargs["temperature"] = None
+    provider_kwargs["max_tokens"] = max_tokens
 
     # Caller/env overrides win over the computed defaults above. Applied last on purpose: before this the
     # unconditional ``provider_kwargs['temperature'] = ...`` clobbered a temperature passed through
@@ -112,22 +121,40 @@ async def create_chat_completion(
     if llm_provider == "openai":
         base_url = os.environ.get("OPENAI_BASE_URL", None)
         if base_url:
-            provider_kwargs['openai_api_base'] = base_url
+            provider_kwargs["openai_api_base"] = base_url
 
+    return provider_kwargs
+
+
+async def _invoke_with_retries(
+    *,
+    llm_provider: str,
+    provider_kwargs: dict[str, Any],
+    messages: list[dict[str, str]],
+    stream: bool,
+    websocket: Any | None,
+    cost_callback,
+    call_kwargs: dict[str, Any],
+) -> str:
     provider = get_llm(llm_provider, **provider_kwargs)
-    response = ""
-    # create response
+    model = provider_kwargs.get("model")
     max_attempts = 1 if (stream and websocket is not None) else 10
     last_exception: Exception | None = None
+    response = ""
+
     for attempt in range(1, max_attempts + 1):
         try:
             response = await provider.get_chat_response(
-                messages, stream, websocket, **kwargs
+                messages, stream, websocket, **call_kwargs
             )
         except Exception as exc:
             last_exception = exc
-            logging.getLogger(__name__).warning(
-                f"LLM request failed (attempt {attempt}/{max_attempts}): {exc}"
+            logger.warning(
+                "LLM request failed (%s attempt %s/%s): %s",
+                llm_provider,
+                attempt,
+                max_attempts,
+                exc,
             )
             if attempt < max_attempts:
                 await asyncio.sleep(min(2 ** (attempt - 1), 8))
@@ -150,8 +177,11 @@ async def create_chat_completion(
 
         if not response:
             last_exception = RuntimeError("Empty response from LLM provider")
-            logging.getLogger(__name__).warning(
-                f"LLM returned empty response (attempt {attempt}/{max_attempts})"
+            logger.warning(
+                "LLM returned empty response (%s attempt %s/%s)",
+                llm_provider,
+                attempt,
+                max_attempts,
             )
             if attempt < max_attempts:
                 await asyncio.sleep(min(2 ** (attempt - 1), 8))
@@ -160,8 +190,131 @@ async def create_chat_completion(
 
         return response
 
-    logging.error(f"Failed to get response from {llm_provider} API")
-    raise RuntimeError(f"Failed to get response from {llm_provider} API") from last_exception
+    raise RuntimeError(
+        f"Failed to get response from {llm_provider} API"
+    ) from last_exception
+
+
+async def create_chat_completion(
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = 0.4,
+        max_tokens: int | None = 4000,
+        llm_provider: str | None = None,
+        stream: bool = False,
+        websocket: Any | None = None,
+        llm_kwargs: dict[str, Any] | None = None,
+        cost_callback: callable = None,
+        reasoning_effort: str | None = ReasoningEfforts.Medium.value,
+        fallback_llm: str | None = None,
+        **kwargs
+) -> str:
+    """Create a chat completion using the OpenAI API
+    Args:
+        messages (list[dict[str, str]]): The messages to send to the chat completion.
+        model (str, optional): The model to use. Defaults to None.
+        temperature (float, optional): The temperature to use. Defaults to 0.4.
+        max_tokens (int, optional): The max tokens to use. Defaults to 4000.
+        llm_provider (str, optional): The LLM Provider to use.
+        stream (bool): Whether to stream the response. Defaults to False.
+        websocket (WebSocket): The websocket used in the current request,
+        llm_kwargs (dict[str, Any], optional): Additional LLM keyword arguments. Defaults to None.
+        cost_callback: Callback function for updating cost.
+        reasoning_effort (str, optional): Reasoning effort for OpenAI's reasoning models. Defaults to 'low'.
+        fallback_llm (str, optional): ``provider:model`` used if the primary fails.
+            When omitted, ``FAST_LLM_FALLBACK`` applies only to Fast-slot calls.
+        **kwargs: Additional keyword arguments.
+    Returns:
+        str: The response from the chat completion.
+    """
+    # validate input
+    if model is None:
+        raise ValueError("Model cannot be None")
+    # Sanity guard against absurd values (e.g., env var typos). The actual
+    # per-model output limits are enforced by the upstream provider.
+    if max_tokens is not None and max_tokens > 200_000:
+        raise ValueError(
+            f"max_tokens={max_tokens} exceeds the largest output limit of "
+            "any currently available model (128k as of late 2025). "
+            "Check your FAST_TOKEN_LIMIT / SMART_TOKEN_LIMIT / "
+            "STRATEGIC_TOKEN_LIMIT env vars for typos."
+        )
+
+    provider_kwargs = _build_provider_kwargs(
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        llm_provider=llm_provider,
+        llm_kwargs=llm_kwargs,
+        reasoning_effort=reasoning_effort,
+    )
+
+    try:
+        return await _invoke_with_retries(
+            llm_provider=llm_provider,
+            provider_kwargs=provider_kwargs,
+            messages=messages,
+            stream=stream,
+            websocket=websocket,
+            cost_callback=cost_callback,
+            call_kwargs=kwargs,
+        )
+    except Exception as primary_exc:
+        fallback_spec = resolve_fast_fallback(
+            llm_provider, model, explicit_fallback=fallback_llm
+        )
+        if not fallback_spec:
+            logger.error("Failed to get response from %s API", llm_provider)
+            raise
+
+        try:
+            fb_provider, fb_model = parse_llm_spec(fallback_spec)
+        except ValueError:
+            logger.error(
+                "Invalid FAST_LLM_FALLBACK=%r; not retrying after %s failure",
+                fallback_spec,
+                llm_provider,
+            )
+            raise primary_exc
+
+        logger.warning(
+            "Primary Fast LLM %s:%s failed (%s); falling back to %s:%s",
+            llm_provider,
+            model,
+            primary_exc,
+            fb_provider,
+            fb_model,
+        )
+        fb_kwargs = _build_provider_kwargs(
+            model=fb_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            llm_provider=fb_provider,
+            llm_kwargs=llm_kwargs,
+            reasoning_effort=reasoning_effort,
+        )
+        try:
+            return await _invoke_with_retries(
+                llm_provider=fb_provider,
+                provider_kwargs=fb_kwargs,
+                messages=messages,
+                stream=stream,
+                websocket=websocket,
+                cost_callback=cost_callback,
+                call_kwargs=kwargs,
+            )
+        except Exception as fallback_exc:
+            logger.error(
+                "Fast fallback %s:%s also failed after primary %s:%s",
+                fb_provider,
+                fb_model,
+                llm_provider,
+                model,
+            )
+            raise RuntimeError(
+                f"Failed to get response from {llm_provider} API "
+                f"(fallback {fb_provider} also failed)"
+            ) from fallback_exc
 
 
 async def construct_subtopics(
