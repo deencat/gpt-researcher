@@ -15,6 +15,8 @@ export interface BriefValue {
   playbook_id: string;
   /** Language ids from gpt_researcher.playbooks.languages when a playbook is set. */
   language_ids: string[];
+  /** Active Perplexity-style project folder, when set. */
+  project_id?: string;
 }
 
 export const DEFAULT_BRIEF: BriefValue = {
@@ -27,6 +29,7 @@ export const DEFAULT_BRIEF: BriefValue = {
   mcp_configs: '',
   playbook_id: '',
   language_ids: [],
+  project_id: undefined,
 };
 
 export const REPORT_TYPE_VALUES = ['research_report', 'detailed_report', 'deep', 'multi_agents'];
@@ -83,6 +86,7 @@ export function parseBrief(raw: unknown): BriefValue {
     mcp_configs: typeof r.mcp_configs === 'string' ? r.mcp_configs : '',
     playbook_id,
     language_ids,
+    project_id: typeof r.project_id === 'string' && r.project_id ? r.project_id : undefined,
   };
 }
 
@@ -98,6 +102,7 @@ export const startPayload = (task: string, brief: BriefValue) => ({
   mcp_enabled: brief.mcp_enabled,
   mcp_strategy: brief.mcp_strategy,
   mcp_configs: brief.mcp_enabled ? mcpServers(brief.mcp_configs) : [],
+  project_id: brief.project_id || undefined,
   ...(brief.playbook_id
     ? {
         playbook_id: brief.playbook_id,

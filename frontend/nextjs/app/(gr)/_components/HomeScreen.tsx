@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { startResearch } from '@/lib/research/live';
 import { checkMcp } from '@/lib/research/mcp';
+import { authErrorMessage, getProject, isAuthError } from '@/lib/research/projects';
 import { useBackend } from './backend';
 import Brief, { type BriefField } from './Brief';
 import { FaviconStack } from './Favicon';
 import { useLinks, useMock } from './mode';
 import { openSettings, useBrief, type SettingsTab } from './preferences';
+import SessionExpired from './SessionExpired';
 import { Arrow, Connection } from './ui';
 import { useReports } from './useReports';
 
@@ -43,14 +45,51 @@ export default function HomeScreen({
   const [note, setNote] = useState('');
   const [starting, setStarting] = useState(false);
   const [problem, setProblem] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [projectAuthMessage, setProjectAuthMessage] = useState('');
+  const [projectLoadError, setProjectLoadError] = useState('');
 
   const offline = backend.status === 'offline';
   const mcpBroken = brief.mcp_enabled && checkMcp(brief.mcp_configs).state === 'invalid';
-  const canStart = Boolean(question.trim()) && !offline && !starting && !mcpBroken;
+  const canStart = Boolean(question.trim()) && !offline && !starting && !mcpBroken && !projectAuthMessage;
 
   useEffect(() => {
     if (settingsTab) openSettings(settingsTab);
   }, [settingsTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get('project');
+    const q = params.get('q');
+    if (q?.trim() && !question.trim()) setQuestion(q.trim());
+    if (!projectId) return;
+    void getProject(projectId)
+      .then((p) => {
+        if (!p) {
+          setProjectLoadError('That project was not found or is no longer available.');
+          return;
+        }
+        setProjectName(p.name);
+        setProjectAuthMessage('');
+        setProjectLoadError('');
+        // Hybrid only when the project actually has documents; empty projects stay on web. :-)
+        const hasDocs = (p.documents?.length ?? 0) > 0;
+        setBrief((prev) => ({
+          ...prev,
+          project_id: projectId,
+          report_source: hasDocs ? 'hybrid' : 'web',
+        }));
+      })
+      .catch((e) => {
+        if (isAuthError(e)) {
+          setProjectAuthMessage(authErrorMessage(e));
+          return;
+        }
+        setProjectLoadError(authErrorMessage(e));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only apply ?project= / ?q= once on mount
+  }, []);
 
   const addFiles = (list: FileList | null) => {
     const incoming = Array.from(list ?? []);
@@ -182,6 +221,24 @@ export default function HomeScreen({
             </p>
           )}
           <div className="mt-5">
+            {projectAuthMessage && <SessionExpired message={projectAuthMessage} className="mb-3" />}
+            {projectLoadError && (
+              <p role="alert" className="mb-3 text-[13.5px] text-rubric">
+                {projectLoadError}
+              </p>
+            )}
+            {brief.project_id && !projectAuthMessage && (
+              <p className="mb-3 text-[13.5px] text-ink-2">
+                Researching in project{' '}
+                <Link className="underline" href={links.project(brief.project_id)}>
+                  {projectName || brief.project_id}
+                </Link>
+                . Project instructions apply on every run
+                {brief.report_source === 'hybrid'
+                  ? '; uploaded project documents are included with web sources.'
+                  : '; web search is used until you upload documents to this project.'}
+              </p>
+            )}
             <Brief value={brief} onChange={setBrief} openField={openField} documents={backend.status === 'online' ? backend.documents.length : undefined} />
             <p className="sr-only" role="status">
               {note}

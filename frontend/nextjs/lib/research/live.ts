@@ -103,7 +103,9 @@ async function finish(id: string, path: ResearchEvent & { type: 'path' }) {
       domains: run.brief.domains,
       playbook_id: run.brief.playbook_id,
       language_ids: run.brief.language_ids,
+      project_id: run.brief.project_id,
     },
+    project_id: run.brief.project_id,
   };
   const saved = saveReport(report)
     .then(() => {
