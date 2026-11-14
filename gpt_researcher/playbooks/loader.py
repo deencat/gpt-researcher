@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ from .languages import DEFAULT_PLAYBOOK_LANGUAGES, normalize_language_ids
 from .schema import PlaybookSection, PlaybookTemplate
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+logger = logging.getLogger(__name__)
 
 
 class PlaybookNotFoundError(KeyError):
@@ -65,8 +67,13 @@ def parse_playbook_dict(data: Dict[str, Any], *, fallback_id: str = "") -> Playb
         languages = list(DEFAULT_PLAYBOOK_LANGUAGES)
 
     total_words = data.get("total_words")
-    if total_words is not None:
-        total_words = int(total_words)
+    if total_words is not None and total_words != "":
+        try:
+            total_words = int(total_words)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Playbook total_words must be an integer: {total_words!r}") from exc
+    else:
+        total_words = None
 
     starter = [str(p).strip() for p in _as_list(data.get("starter_prompts")) if str(p).strip()]
     project_defaults = data.get("project_defaults") or {}
@@ -117,8 +124,13 @@ def _index_templates(templates_dir: str) -> Dict[str, PlaybookTemplate]:
             continue
         if path.name.startswith("_"):
             continue
-        data = _load_file(path)
-        template = parse_playbook_dict(data, fallback_id=path.stem)
+        try:
+            data = _load_file(path)
+            template = parse_playbook_dict(data, fallback_id=path.stem)
+        except Exception as exc:
+            # One corrupt file must not take down the whole catalog.
+            logger.warning("Skipping invalid playbook template %s: %s", path, exc)
+            continue
         index[template.id] = template
     return index
 

@@ -7,6 +7,7 @@ from .loader import (
     clear_playbook_cache,
     get_playbook,
     list_playbooks,
+    parse_playbook_dict,
 )
 from .schema import AppliedPlaybook, PlaybookSection, PlaybookTemplate
 
@@ -24,4 +25,5 @@ __all__ = [
     "get_playbook",
     "list_playbooks",
     "merge_start_payload",
+    "parse_playbook_dict",
 ]

@@ -126,25 +126,44 @@ def apply_to_researcher(researcher: Any, applied: AppliedPlaybook) -> None:
         researcher.role = applied.agent_role
 
 
-def merge_start_payload(json_data: Dict[str, Any]) -> Dict[str, Any]:
+def _playbook_id_from_payload(data: Dict[str, Any]) -> Optional[str]:
+    """Extract a playbook id from start payload fields.
+
+    Accepts `playbook_id` or a string `playbook` alias. Ignores non-string
+    `playbook` values (e.g. an already-merged metadata dict).
+    """
+    for key in ("playbook_id", "playbook"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def merge_start_payload(json_data: Any) -> Dict[str, Any]:
     """If playbook_id is present, merge resolved defaults into the start payload.
 
     Returns a shallow-copied dict suitable for extract_command_data. Adds
     `custom_prompt`, `language`, and `playbook` metadata keys used downstream.
+    Malformed non-mapping inputs are treated as an empty payload.
     """
-    data = dict(json_data or {})
-    playbook_id = data.get("playbook_id") or data.get("playbook")
+    if not isinstance(json_data, dict):
+        return {}
+    data = dict(json_data)
+    playbook_id = _playbook_id_from_payload(data)
     if not playbook_id:
         return data
 
-    language_ids = data.get("language_ids") or data.get("languages")
+    language_ids = data.get("language_ids")
+    if language_ids is None:
+        language_ids = data.get("languages")
+    # Empty list should fall through to template defaults inside apply_playbook.
     applied = apply_playbook(
-        str(playbook_id),
+        playbook_id,
         query=str(data.get("task") or ""),
-        report_type=data.get("report_type"),
-        report_source=data.get("report_source"),
-        tone=data.get("tone"),
-        language_ids=language_ids,
+        report_type=data.get("report_type") if isinstance(data.get("report_type"), str) else None,
+        report_source=data.get("report_source") if isinstance(data.get("report_source"), str) else None,
+        tone=data.get("tone") if isinstance(data.get("tone"), str) else None,
+        language_ids=language_ids if isinstance(language_ids, (list, tuple)) else None,
     )
 
     # Template fills blanks; explicit request values already preferred in apply_playbook
