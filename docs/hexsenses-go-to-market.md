@@ -1,8 +1,9 @@
 # Hexsenses — one-page go-to-market
 
-**Brand:** Hexsenses (domain candidate: `hexsenses.com`; backup: `sixinsight.com`)  
+**Brand:** Hexsenses (`hexsenses.com` registered; migrate off `sixlines.io` before Apr 2027)  
 **Live research app today:** [research.sixlines.io](https://research.sixlines.io)  
-**North star:** ~US$10k/month **profit**, low new upfront spend, partners earn with you — not classic MLM.
+**North star:** ~US$10k/month **profit**, low new upfront spend, partners earn with you — not classic MLM.  
+**First dollar plan:** [hexsenses-first-100-plan.md](./hexsenses-first-100-plan.md) (Perplexity gaps + example business + checklist to US$100).
 
 ---
 
@@ -77,7 +78,8 @@ Do **not** push consumer plans much above $100; above that use retainers.
 
 ## This week (checklist)
 
-- [ ] Register/hold `hexsenses.com` (and optionally `sixinsight.com` → redirect) when ready  
+- [x] Register/hold `hexsenses.com` (3-year promo done)  
+- [ ] Execute [first US$100 checklist](./hexsenses-first-100-plan.md#6-gap-checklist-until-first-us100) 
 - [ ] Rename GitHub repo when brand is locked; keep site running  
 - [ ] Publish one salon case snippet (even a simple carousel)  
 - [ ] Price sheet: Max $100, retainer tiers, video pack  
