@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { authErrorMessage, isAuthError } from '@/lib/research/authErrors';
 import {
   draftFromAnswers,
   FORMAT_OPTIONS,
@@ -9,6 +10,7 @@ import {
   MATERIAL_OPTIONS,
   type SetupAnswers,
 } from '@/lib/research/projectSetup';
+import SessionExpired from './SessionExpired';
 
 type Draft = ReturnType<typeof draftFromAnswers>;
 
@@ -50,7 +52,7 @@ export default function ProjectSetupCoach({
   title: string;
   open: boolean;
   onClose: () => void;
-  onApply: (draft: Draft) => void;
+  onApply: (draft: Draft) => void | Promise<void>;
 }) {
   const guessed = useMemo(() => guessFromTitle(title), [title]);
   const [step, setStep] = useState<Step>('goal');
@@ -61,6 +63,9 @@ export default function ProjectSetupCoach({
     materials: guessed.materials || [],
     constraints: guessed.constraints || '',
   });
+  const [applying, setApplying] = useState(false);
+  const [authMessage, setAuthMessage] = useState('');
+  const [applyError, setApplyError] = useState('');
 
   if (!open) return null;
 
@@ -226,16 +231,34 @@ export default function ProjectSetupCoach({
         ) : (
           <button
             type="button"
-            className="gr-btn h-10 px-4"
+            className="gr-btn h-10 px-4 disabled:opacity-40"
+            disabled={applying}
             onClick={() => {
-              onApply(draft);
-              onClose();
+              void (async () => {
+                setApplying(true);
+                setAuthMessage('');
+                setApplyError('');
+                try {
+                  await onApply(draft);
+                  onClose();
+                } catch (e) {
+                  if (isAuthError(e)) {
+                    setAuthMessage(authErrorMessage(e));
+                  } else {
+                    setApplyError(authErrorMessage(e));
+                  }
+                } finally {
+                  setApplying(false);
+                }
+              })();
             }}
           >
-            Apply to project fields
+            {applying ? 'Applying…' : 'Apply to project fields'}
           </button>
         )}
       </div>
+      {authMessage && <SessionExpired message={authMessage} className="mt-4" />}
+      {applyError && <p className="mt-4 text-[13.5px] text-rubric">{applyError}</p>}
     </section>
   );
 }

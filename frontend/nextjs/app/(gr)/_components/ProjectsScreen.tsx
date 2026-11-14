@@ -3,25 +3,39 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { createProject, listProjects, type Project } from '@/lib/research/projects';
+import {
+  authErrorMessage,
+  createProject,
+  isAuthError,
+  listProjects,
+  type Project,
+} from '@/lib/research/projects';
 import { useLinks } from './mode';
+import SessionExpired from './SessionExpired';
 import { Eye } from './ui';
 
 export default function ProjectsScreen() {
   const links = useLinks();
   const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'auth'>('loading');
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [problem, setProblem] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
 
   const refresh = async () => {
     setStatus('loading');
+    setAuthMessage('');
     try {
       setProjects(await listProjects());
       setStatus('ready');
-    } catch {
+    } catch (e) {
+      if (isAuthError(e)) {
+        setAuthMessage(authErrorMessage(e));
+        setStatus('auth');
+        return;
+      }
       setStatus('error');
     }
   };
@@ -38,7 +52,13 @@ export default function ProjectsScreen() {
       const project = await createProject({ name: name.trim() });
       router.push(links.project(project.id));
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : String(e));
+      if (isAuthError(e)) {
+        setAuthMessage(authErrorMessage(e));
+        setStatus('auth');
+      } else {
+        setProblem(authErrorMessage(e));
+      }
+    } finally {
       setCreating(false);
     }
   };
@@ -51,6 +71,8 @@ export default function ProjectsScreen() {
         Like Perplexity Projects: keep documents, system instructions, and research runs together in one place. Only you can see your projects.
       </p>
 
+      {status === 'auth' && <SessionExpired message={authMessage} className="mt-6" />}
+
       <section className="mt-10 border border-rule-soft bg-paper px-5 py-5 sm:px-6">
         <h2 className="text-[15px] font-semibold">New project</h2>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
@@ -61,7 +83,7 @@ export default function ProjectsScreen() {
             placeholder="e.g. Nvidia earnings, EU AI Act"
             className="h-11 flex-1 border border-rule bg-transparent px-3 text-[14.5px] outline-none focus:border-ink"
           />
-          <button type="button" disabled={!name.trim() || creating} onClick={() => void create()} className="gr-btn h-11 px-5 disabled:opacity-40">
+          <button type="button" disabled={!name.trim() || creating || status === 'auth'} onClick={() => void create()} className="gr-btn h-11 px-5 disabled:opacity-40">
             Create
           </button>
         </div>

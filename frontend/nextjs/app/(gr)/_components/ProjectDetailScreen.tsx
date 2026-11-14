@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
+  authErrorMessage,
   deleteProject,
   deleteProjectDocument,
   getProject,
+  isAuthError,
   updateProject,
   uploadProjectDocument,
   type Project,
@@ -16,6 +18,7 @@ import { DEFAULT_BRIEF, type BriefValue } from '@/lib/research/brief';
 import { useBrief } from './preferences';
 import { useLinks } from './mode';
 import ProjectSetupCoach from './ProjectSetupCoach';
+import SessionExpired from './SessionExpired';
 import { Eye } from './ui';
 
 export default function ProjectDetailScreen({ projectId }: { projectId: string }) {
@@ -28,16 +31,23 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
   const [description, setDescription] = useState('');
   const [name, setName] = useState('');
   const [rows, setRows] = useState<ReportRow[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error' | 'auth'>('loading');
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
   const [coachOpen, setCoachOpen] = useState(false);
   const [coachDismissed, setCoachDismissed] = useState(false);
   const [starterPrompts, setStarterPrompts] = useState<string[]>([]);
   const [documentIdeas, setDocumentIdeas] = useState<string[]>([]);
 
+  const markAuth = (error: unknown) => {
+    setAuthMessage(authErrorMessage(error));
+    setStatus('auth');
+  };
+
   const refresh = async () => {
     setStatus('loading');
+    setAuthMessage('');
     try {
       const next = await getProject(projectId);
       if (!next) {
@@ -53,7 +63,11 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
       const empty = !next.description?.trim() && !next.instructions?.trim();
       if (empty && !coachDismissed) setCoachOpen(true);
       setStatus('ready');
-    } catch {
+    } catch (e) {
+      if (isAuthError(e)) {
+        markAuth(e);
+        return;
+      }
       setStatus('error');
     }
   };
@@ -64,7 +78,7 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
   }, [projectId]);
 
   const save = async (override?: { description?: string; instructions?: string; name?: string }) => {
-    if (!project || saving) return;
+    if (!project || saving) return false;
     setSaving(true);
     setNote('');
     try {
@@ -78,8 +92,15 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
       setDescription(next.description || '');
       setInstructions(next.instructions || '');
       setNote('Saved.');
+      return true;
     } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      if (isAuthError(e)) {
+        markAuth(e);
+        setNote('');
+        throw e;
+      }
+      setNote(authErrorMessage(e));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -95,14 +116,28 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
       await refresh();
       setNote('Documents uploaded.');
     } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      if (isAuthError(e)) {
+        markAuth(e);
+      } else {
+        setNote(authErrorMessage(e));
+      }
     }
   };
 
   const removeDoc = async (filename: string) => {
     if (!project) return;
-    await deleteProjectDocument(project.id, filename);
-    await refresh();
+    setNote('');
+    try {
+      await deleteProjectDocument(project.id, filename);
+      await refresh();
+      setNote(`Removed ${filename}.`);
+    } catch (e) {
+      if (isAuthError(e)) {
+        markAuth(e);
+      } else {
+        setNote(authErrorMessage(e));
+      }
+    }
   };
 
   const researchHere = (question?: string) => {
@@ -119,12 +154,31 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
 
   const remove = async () => {
     if (!project || !window.confirm(`Delete project “${project.name}”? Documents stay removed.`)) return;
-    await deleteProject(project.id);
-    router.push(links.projects);
+    setNote('');
+    try {
+      await deleteProject(project.id);
+      router.push(links.projects);
+    } catch (e) {
+      if (isAuthError(e)) {
+        markAuth(e);
+      } else {
+        setNote(authErrorMessage(e));
+      }
+    }
   };
 
   if (status === 'loading') {
     return <main className="mx-auto max-w-[920px] px-5 py-16 text-[14px] text-ink-3">Loading project…</main>;
+  }
+  if (status === 'auth') {
+    return (
+      <main className="mx-auto max-w-[920px] px-5 py-16">
+        <SessionExpired message={authMessage} />
+        <Link href={links.projects} className="mt-4 inline-block underline">
+          Back to projects
+        </Link>
+      </main>
+    );
   }
   if (status === 'missing') {
     return (
@@ -195,13 +249,15 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
           setCoachOpen(false);
           setCoachDismissed(true);
         }}
-        onApply={(draft) => {
+        onApply={async (draft) => {
           setDescription(draft.description);
           setInstructions(draft.instructions);
           setStarterPrompts(draft.researchPrompts);
           setDocumentIdeas(draft.documentIdeas);
-          void save({ description: draft.description, instructions: draft.instructions, name });
-          setNote('Draft applied and saved. Next: add documents, then run a starter research prompt.');
+          const ok = await save({ description: draft.description, instructions: draft.instructions, name });
+          if (ok) {
+            setNote('Draft applied and saved. Next: add documents, then run a starter research prompt.');
+          }
         }}
       />
 

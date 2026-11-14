@@ -1,5 +1,7 @@
 /** Client helpers for Perplexity-style research Projects. :-) */
 
+import { AuthError, throwForResponse } from './authErrors';
+
 export interface Project {
   id: string;
   name: string;
@@ -12,8 +14,10 @@ export interface Project {
   document_count: number;
 }
 
+export { AuthError, isAuthError, authErrorMessage, redirectToLogin, LOGIN_PATH } from './authErrors';
+
 const json = async <T>(res: Response): Promise<T> => {
-  if (!res.ok) throw new Error(`The backend answered with ${res.status}.`);
+  if (!res.ok) throwForResponse(res);
   return (await res.json()) as T;
 };
 
@@ -49,7 +53,8 @@ export const updateProject = async (
 
 export const deleteProject = async (id: string) => {
   const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok && res.status !== 404) throw new Error(`The backend answered with ${res.status}.`);
+  if (res.status === 404) return;
+  if (!res.ok) throwForResponse(res, 'Could not delete this project.');
 };
 
 export const uploadProjectDocument = async (projectId: string, file: File) => {
@@ -65,13 +70,15 @@ export const deleteProjectDocument = async (projectId: string, filename: string)
     `/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(filename)}`,
     { method: 'DELETE' },
   );
-  if (!res.ok && res.status !== 404) throw new Error(`The backend answered with ${res.status}.`);
+  if (res.status === 404) return;
+  if (!res.ok) throwForResponse(res, 'Could not remove this document.');
 };
 
 export const getMe = async () => {
   try {
     return (await json<{ email?: string }>(await fetch('/api/me', { cache: 'no-store' }))).email ?? '';
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthError) throw error;
     return '';
   }
 };
