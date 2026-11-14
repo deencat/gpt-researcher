@@ -35,6 +35,8 @@ from gpt_researcher.utils.enum import Tone
 from chat.chat import ChatAgentWithMemory
 
 from server.report_store import ReportStore
+from server.project_store import ProjectStore
+from server.auth_user import require_user
 
 # MongoDB services removed - no database persistence needed
 
@@ -133,6 +135,7 @@ app.mount("/site", StaticFiles(directory=frontend_dir), name="site")
 manager = WebSocketManager()
 
 report_store = ReportStore(Path(os.getenv('REPORT_STORE_PATH', os.path.join('data', 'reports.json'))))
+project_store = ProjectStore(Path(os.getenv('DATA_ROOT', 'data')))
 
 # Constants
 DOC_PATH = os.getenv("DOC_PATH", "./my-docs")
@@ -179,17 +182,108 @@ async def read_report(request: Request, research_id: str):
     return FileResponse(docx_path)
 
 
+@app.get("/api/me")
+async def get_me(request: Request):
+    user = require_user(request)
+    return {"email": user.email}
+
+
+@app.get("/api/projects")
+async def list_projects(request: Request):
+    user = require_user(request)
+    return {"projects": await project_store.list_projects(user)}
+
+
+@app.post("/api/projects")
+async def create_project(request: Request):
+    user = require_user(request)
+    data = await request.json()
+    project = await project_store.create_project(
+        user,
+        name=str(data.get("name") or "Untitled project"),
+        description=str(data.get("description") or ""),
+        instructions=str(data.get("instructions") or ""),
+    )
+    return {"project": project}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str, request: Request):
+    user = require_user(request)
+    project = await project_store.get_project(user, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"project": project}
+
+
+@app.put("/api/projects/{project_id}")
+async def update_project(project_id: str, request: Request):
+    user = require_user(request)
+    data = await request.json()
+    project = await project_store.update_project(
+        user,
+        project_id,
+        name=data.get("name"),
+        description=data.get("description"),
+        instructions=data.get("instructions"),
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"project": project}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str, request: Request):
+    user = require_user(request)
+    if not await project_store.delete_project(user, project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"success": True}
+
+
+@app.get("/api/projects/{project_id}/documents")
+async def list_project_documents(project_id: str, request: Request):
+    user = require_user(request)
+    docs = await project_store.list_documents(user, project_id)
+    if docs is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"files": docs}
+
+
+@app.post("/api/projects/{project_id}/documents")
+async def upload_project_document(project_id: str, request: Request, file: UploadFile = File(...)):
+    user = require_user(request)
+    content = await file.read()
+    saved = await project_store.save_document(user, project_id, file.filename or "document", content)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"filename": saved}
+
+
+@app.delete("/api/projects/{project_id}/documents/{filename}")
+async def delete_project_document(project_id: str, filename: str, request: Request):
+    user = require_user(request)
+    if not await project_store.delete_document(user, project_id, filename):
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"success": True}
+
+
 # Simplified API routes - no database persistence
 @app.get("/api/reports")
-async def get_all_reports(report_ids: str = None):
+async def get_all_reports(request: Request, report_ids: str = None, project_id: str = None):
+    user = require_user(request)
     report_ids_list = report_ids.split(",") if report_ids else None
-    reports = await report_store.list_reports(report_ids_list)
+    reports = await report_store.list_reports(
+        report_ids_list,
+        owner_email=user.email,
+        project_id=project_id,
+    )
     return {"reports": reports}
 
 
 @app.get("/api/reports/{research_id}")
-async def get_report_by_id(research_id: str):
-    report = await report_store.get_report(research_id)
+async def get_report_by_id(research_id: str, request: Request):
+    user = require_user(request)
+    report = await report_store.get_report(research_id, owner_email=user.email)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"report": report}
@@ -198,11 +292,12 @@ async def get_report_by_id(research_id: str):
 @app.post("/api/reports")
 async def create_or_update_report(request: Request):
     try:
+        user = require_user(request)
         data = await request.json()
         research_id = data.get("id", "temp_id")
 
         now_ms = int(time.time() * 1000)
-        existing = await report_store.get_report(research_id)
+        existing = await report_store.get_report(research_id, owner_email=user.email)
         incoming_timestamp = data.get("timestamp")
         timestamp = incoming_timestamp if isinstance(incoming_timestamp, int) else now_ms
         if existing and isinstance(existing.get("timestamp"), int):
@@ -215,6 +310,8 @@ async def create_or_update_report(request: Request):
             "orderedData": data.get("orderedData") or [],
             "chatMessages": data.get("chatMessages") or [],
             "timestamp": timestamp,
+            "owner_email": user.email,
+            "project_id": data.get("project_id") or (existing or {}).get("project_id"),
         }
         if isinstance(data.get("brief"), dict):
             report["brief"] = data["brief"]
@@ -228,7 +325,8 @@ async def create_or_update_report(request: Request):
 
 @app.put("/api/reports/{research_id}")
 async def update_report(research_id: str, request: Request):
-    existing = await report_store.get_report(research_id)
+    user = require_user(request)
+    existing = await report_store.get_report(research_id, owner_email=user.email)
     if existing is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
@@ -240,6 +338,7 @@ async def update_report(research_id: str, request: Request):
         **{k: v for k, v in data.items() if v is not None},
         "id": research_id,
         "timestamp": now_ms,
+        "owner_email": user.email,
     }
 
     await report_store.upsert_report(research_id, updated)
@@ -247,16 +346,18 @@ async def update_report(research_id: str, request: Request):
 
 
 @app.delete("/api/reports/{research_id}")
-async def delete_report(research_id: str):
-    existed = await report_store.delete_report(research_id)
+async def delete_report(research_id: str, request: Request):
+    user = require_user(request)
+    existed = await report_store.delete_report(research_id, owner_email=user.email)
     if not existed:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"success": True}
 
 
 @app.get("/api/reports/{research_id}/chat")
-async def get_report_chat(research_id: str):
-    report = await report_store.get_report(research_id)
+async def get_report_chat(research_id: str, request: Request):
+    user = require_user(request)
+    report = await report_store.get_report(research_id, owner_email=user.email)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"chatMessages": report.get("chatMessages") or []}
@@ -265,7 +366,8 @@ async def get_report_chat(research_id: str):
 @app.post("/api/reports/{research_id}/chat")
 async def research_report_chat(research_id: str, request: Request):
     """Chat against a stored report: LLM reply + persist user/assistant messages."""
-    report = await report_store.get_report(research_id)
+    user = require_user(request)
+    report = await report_store.get_report(research_id, owner_email=user.email)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
 

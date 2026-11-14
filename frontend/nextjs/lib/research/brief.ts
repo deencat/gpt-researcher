@@ -10,6 +10,8 @@ export interface BriefValue {
   mcp_strategy: string;
   /** The MCP server list as typed, a JSON array. */
   mcp_configs: string;
+  /** Active Perplexity-style project folder, when set. */
+  project_id?: string;
 }
 
 export const DEFAULT_BRIEF: BriefValue = {
@@ -20,6 +22,7 @@ export const DEFAULT_BRIEF: BriefValue = {
   mcp_enabled: false,
   mcp_strategy: 'fast',
   mcp_configs: '',
+  project_id: undefined,
 };
 
 export const REPORT_TYPE_VALUES = ['research_report', 'detailed_report', 'deep', 'multi_agents'];
@@ -68,6 +71,7 @@ export function parseBrief(raw: unknown): BriefValue {
     mcp_enabled: r.mcp_enabled === true,
     mcp_strategy: oneOf(r.mcp_strategy, MCP_STRATEGY_VALUES, DEFAULT_BRIEF.mcp_strategy),
     mcp_configs: typeof r.mcp_configs === 'string' ? r.mcp_configs : '',
+    project_id: typeof r.project_id === 'string' && r.project_id ? r.project_id : undefined,
   };
 }
 
@@ -83,4 +87,5 @@ export const startPayload = (task: string, brief: BriefValue) => ({
   mcp_enabled: brief.mcp_enabled,
   mcp_strategy: brief.mcp_strategy,
   mcp_configs: brief.mcp_enabled ? mcpServers(brief.mcp_configs) : [],
+  project_id: brief.project_id || undefined,
 });

@@ -21,6 +21,8 @@ export interface StoredReport {
   chatMessages?: StoredChatMessage[];
   timestamp?: number;
   brief?: Partial<BriefValue>;
+  project_id?: string;
+  owner_email?: string;
 }
 
 export interface ReportRow {

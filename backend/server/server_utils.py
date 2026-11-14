@@ -146,11 +146,47 @@ async def handle_start_command(websocket, data: str, manager):
         mcp_strategy,
         mcp_configs,
         max_search_results,
+        project_id,
     ) = extract_command_data(json_data)
 
     if not task or not report_type:
         print("Error: Missing task or report_type")
         return
+
+    # Scope documents + instructions to a Project when provided (Perplexity-style). :-)
+    try:
+        from .auth_user import require_user
+        from .project_store import ProjectStore
+
+        ws_headers = dict(getattr(websocket, "headers", {}) or {})
+        if headers:
+            ws_headers.update(headers)
+        # Starlette headers are a Headers object; normalize.
+        if hasattr(websocket, "headers"):
+            ws_headers.update({k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v for k, v in websocket.headers.items()})
+        user = require_user(headers=ws_headers)
+        if project_id:
+            store = ProjectStore(Path(os.getenv("DATA_ROOT", "data")))
+            project = await store.get_project(user, project_id)
+            if project:
+                docs = store.docs_dir(user, project_id)
+                has_docs = docs.exists() and any(docs.iterdir())
+                if has_docs:
+                    os.environ["DOC_PATH"] = str(docs)
+                if project.get("instructions"):
+                    task = (
+                        "Follow these project instructions for the entire research and report:\n"
+                        f"{project['instructions'].strip()}\n\n"
+                        f"Research question:\n{task}"
+                    )
+                # Never hybrid/local without files — that hard-fails with "Failed to load any documents!". :-)
+                if has_docs and report_source == "web":
+                    report_source = "hybrid"
+                elif not has_docs and report_source in ("hybrid", "local"):
+                    logger.info("Project has no documents; falling back to web research")
+                    report_source = "web"
+    except Exception as e:
+        logger.warning(f"Project context skipped: {e}")
 
     # Create logs handler with websocket and task
     logs_handler = CustomLogsHandler(websocket, task)
@@ -433,4 +469,5 @@ def extract_command_data(json_data: Dict) -> tuple:
         json_data.get("mcp_strategy", "fast"),
         json_data.get("mcp_configs", []),
         json_data.get("max_search_results"),
+        json_data.get("project_id"),
     )

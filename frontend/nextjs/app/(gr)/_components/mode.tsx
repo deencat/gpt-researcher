@@ -21,6 +21,8 @@ export function useLinks() {
   return {
     home: mock ? '/mocks/home' : '/',
     archive: mock ? '/mocks/archive' : '/archive',
+    projects: mock ? '/mocks/home' : '/projects',
+    project: (id: string) => `/projects/${id}`,
     report: (id: string) => (mock ? '/mocks/report' : `/research/${id}`),
   };
 }
