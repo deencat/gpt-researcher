@@ -4,12 +4,14 @@ import pytest
 
 from gpt_researcher.playbooks.produce_pack import (
     PACK_FILES,
+    SCRIPTS_TARGET,
     STORIES_PER_LANGUAGE,
     STORY_LANGUAGES,
     _extract_json,
     _slice_stories_for_language,
     assemble_scripts_markdown,
     assemble_stories_markdown,
+    select_catching_stories,
 )
 
 
@@ -77,3 +79,30 @@ def test_assemble_scripts_markdown():
     )
     assert md.startswith("# Comedy Channel — Shootable Scripts")
     assert "EN01" in md and "YUE01" in md
+    assert str(SCRIPTS_TARGET) in md
+
+
+def test_select_catching_stories_balances_languages():
+    lines = ["# Comedy Channel — Scored Story List\n"]
+    for lang in STORY_LANGUAGES:
+        lines.append(f"\n{lang['heading']}\n")
+        for i in range(1, 11):
+            sid = f"{lang['id_prefix']}{i:02d}"
+            hook = 5 if i <= 3 else 3
+            punch = 5 if i == 1 else 4
+            lines.append(
+                f"{i}. **{sid} — Title {i}**\n"
+                f"   - **premise:** premise {sid}\n"
+                f"   - **hook:** hook {sid}\n"
+                f"   - **Scores:** Hook {hook} / Punch {punch} / Local fit 5 / Remake risk 2\n"
+                f"   - **Ship:** YES\n"
+            )
+    md = "\n".join(lines)
+    picked = select_catching_stories(md, target=10, min_per_language=2)
+    assert len(picked) == 10
+    prefixes = {p["prefix"] for p in picked}
+    assert prefixes == {"EN", "YUE", "CMN", "TW"}
+    from collections import Counter
+
+    counts = Counter(p["prefix"] for p in picked)
+    assert all(v >= 2 for v in counts.values())

@@ -168,12 +168,17 @@ async def produce_stories_markdown(
     return assemble_stories_markdown(batches)
 
 
+# How many catching stories to turn into full shootable scripts. :-)
+SCRIPTS_TARGET = 10
+SCRIPTS_MIN_PER_LANGUAGE = 2
+
+
 def assemble_scripts_markdown(sections: Sequence[str]) -> str:
-    """Join per-language shootable scripts into one document. :-)"""
+    """Join shootable scripts into one document. :-)"""
     header = (
         "# Comedy Channel — Shootable Scripts\n\n"
-        "> One shootable short per language market, grounded in the scored story "
-        "backlog (EN / 粵語 / 普通话 / 國語). Timed beats ~30–60s with hard captions.\n\n"
+        f"> Up to **{SCRIPTS_TARGET}** catching stories from the scored backlog "
+        "(EN / 粵語 / 普通话 / 國語), each as a timed ~30–60s short with hard captions.\n\n"
     )
     body = "\n\n".join(s.strip() for s in sections if (s or "").strip())
     return header + body + "\n"
@@ -205,51 +210,149 @@ def _slice_stories_for_language(stories_markdown: str, lang: Dict[str, str]) -> 
     return "\n".join(lines).strip()
 
 
-async def _produce_script_for_language(
+def _parse_story_cards(stories_markdown: str) -> List[Dict[str, Any]]:
+    """Parse scored story cards from 02_Stories.md into rankable dicts. :-)"""
+    text = stories_markdown or ""
+    cards: List[Dict[str, Any]] = []
+    # Blocks start at "1. **EN01" / "1. **EN01 — title**"
+    parts = re.split(r"(?m)^(?=\d+\.\s+\*\*)", text)
+    for part in parts:
+        head = re.match(
+            r"\d+\.\s+\*\*((?:EN|YUE|CMN|TW)\d{2})(?:\s*[—–\-]\s*([^*]+))?\*\*",
+            part.strip(),
+        )
+        if not head:
+            continue
+        story_id = head.group(1)
+        title = (head.group(2) or "").strip()
+        ship_m = re.search(r"\*\*Ship\s*[:：]\s*\*\*\s*(\w+)", part, flags=re.I)
+        scores_m = re.search(r"\*\*Scores?\s*[:：]\s*\*\*\s*(.+)", part, flags=re.I)
+        premise_m = re.search(
+            r"\*\*(?:Premise|premise)\s*[:：]\s*\*\*\s*(.+)", part
+        )
+        hook_m = re.search(r"\*\*(?:Hook|hook)\s*[:：]\s*\*\*\s*(.+)", part)
+        ship = (ship_m.group(1) if ship_m else "").upper()
+        scores_raw = scores_m.group(1).strip() if scores_m else ""
+        nums = {
+            k.lower(): int(v)
+            for k, v in re.findall(
+                r"(Hook|Punch|Local fit|Remake risk)\s*(\d)", scores_raw, flags=re.I
+            )
+        }
+        prefix = re.sub(r"\d+$", "", story_id)
+        lang = next((L for L in STORY_LANGUAGES if L["id_prefix"] == prefix), None)
+        cards.append(
+            {
+                "id": story_id,
+                "title": title,
+                "prefix": prefix,
+                "lang": lang,
+                "ship": ship,
+                "hook": nums.get("hook", 0),
+                "punch": nums.get("punch", 0),
+                "local_fit": nums.get("local fit", 0),
+                "remake_risk": nums.get("remake risk", 0),
+                "premise": (premise_m.group(1).strip() if premise_m else ""),
+                "hook_line": (hook_m.group(1).strip() if hook_m else ""),
+                "card": part.strip(),
+            }
+        )
+    return cards
+
+
+def select_catching_stories(
+    stories_markdown: str,
+    *,
+    target: int = SCRIPTS_TARGET,
+    min_per_language: int = SCRIPTS_MIN_PER_LANGUAGE,
+) -> List[Dict[str, Any]]:
+    """Pick the strongest Ship:YES stories, balanced across languages. :-)"""
+    cards = [
+        c
+        for c in _parse_story_cards(stories_markdown)
+        if c.get("ship") == "YES" and c.get("lang")
+    ]
+
+    def rank_key(c: Dict[str, Any]) -> tuple:
+        good = c["hook"] + c["punch"] + c["local_fit"]
+        return (good, -c["remake_risk"], c["hook"], c["punch"])
+
+    cards.sort(key=rank_key, reverse=True)
+    selected: List[Dict[str, Any]] = []
+    counts = {L["id_prefix"]: 0 for L in STORY_LANGUAGES}
+
+    # First pass: ensure min_per_language from each market's best cards.
+    for lang in STORY_LANGUAGES:
+        prefix = lang["id_prefix"]
+        pool = [c for c in cards if c["prefix"] == prefix]
+        for c in pool[:max(0, min_per_language)]:
+            if c["id"] not in {s["id"] for s in selected}:
+                selected.append(c)
+                counts[prefix] += 1
+
+    # Second pass: fill to target with remaining global best.
+    for c in cards:
+        if len(selected) >= target:
+            break
+        if c["id"] in {s["id"] for s in selected}:
+            continue
+        selected.append(c)
+        counts[c["prefix"]] += 1
+
+    selected.sort(key=lambda c: (c["prefix"], c["id"]))
+    return selected[:target]
+
+
+async def _produce_script_for_story(
     *,
     brief: str,
-    stories_slice: str,
+    story: Dict[str, Any],
     project_name: str,
     goal: str,
-    lang: Dict[str, str],
 ) -> str:
-    """Write one timed shootable script for a language market. :-)"""
-    story_context = stories_slice or "(No story slice — invent from research, still use this market's id prefix.)"
+    """Write one timed shootable script for a specific story id. :-)"""
+    lang = story["lang"]
+    label = lang["label"] if lang else story["prefix"]
+    story_context = story.get("card") or ""
     prompt = f"""You are a subject-matter expert in multilingual comedy short-form video.
 Project: “{project_name}”
 Goal: {goal or "(none)"}
 
-Write ONE fully shootable comedy short script for this market only:
-**{lang['label']}**
+Write ONE fully shootable comedy short script for this exact story:
+**{story['id']}** — {story.get('title') or '(see card)'}
+Market: **{label}**
 
 Return ONLY valid JSON: {{"markdown": "<markdown string>"}}. No fences.
 
 Rules:
-1. Pick the strongest Ship: YES story from the story list below (prefer highest Hook+Punch+Local fit, then lower Remake risk).
-2. Script heading must cite that story id, e.g.
-   ## Script ({lang['id_prefix']}0X): “Title” (35–55s, {lang['label']})
+1. Script MUST be for story id {story['id']} only (do not switch to another id).
+2. Heading format:
+   ## Script ({story['id']}): “Title” (35–55s, {label})
 3. Include: **Cast**, **Props**, **On-screen style**, then timed sections:
    HOOK → SETUP → ESCALATION → PUNCH + CTA (total ~30–60 seconds).
 4. Dialogue and hard captions in this market's language/script. Keep Chinese variants distinct.
-5. Do NOT use legacy ids S01/S05/S06 — only {lang['id_prefix']}01–{lang['id_prefix']}{STORIES_PER_LANGUAGE:02d}.
+5. Do NOT use legacy ids like S01/S05/S06.
 6. Keep lines short; leave room for captions.
+7. Ground beats in the story card below (premise/hook/beats/scores).
 
-Story list for this market:
+Story card:
 ---
-{story_context[:9000]}
+{story_context[:7000]}
 ---
 
 Research brief (secondary context):
 ---
-{brief[:4000]}
+{brief[:3000]}
 ---
 """
     data = await _llm_json(prompt=prompt, temperature=0.35, max_tokens=5000)
     md = str(data.get("markdown") or "").strip()
     if not md:
-        raise ValueError(f"Empty script for {lang['label']}")
+        raise ValueError(f"Empty script for {story['id']}")
+    if story["id"] not in md:
+        md = f"## Script ({story['id']}): {story.get('title') or label}\n\n{md}"
     if not md.lstrip().startswith("#"):
-        md = f"## Script ({lang['id_prefix']}): {lang['label']}\n\n{md}"
+        md = f"## Script ({story['id']}): {story.get('title') or label}\n\n{md}"
     return md
 
 
@@ -260,21 +363,48 @@ async def produce_scripts_markdown(
     project_name: str = "Comedy channel",
     goal: str = "",
 ) -> str:
-    """Build 03_Scripts.md: one timed script per language from the 40-story list. :-)"""
+    """Build 03_Scripts.md for ~10 catching stories from the 40-story list. :-)"""
     brief = _trim_brief(research_markdown, limit=8000)
     stories = (stories_markdown or "").strip()
-    batches = await asyncio.gather(
-        *[
-            _produce_script_for_language(
-                brief=brief,
-                stories_slice=_slice_stories_for_language(stories, lang),
-                project_name=project_name,
-                goal=goal,
-                lang=lang,
+    selected = select_catching_stories(stories)
+    if not selected:
+        # Fallback: one script per language from raw slices (legacy behavior). :-)
+        selected = []
+        for lang in STORY_LANGUAGES:
+            selected.append(
+                {
+                    "id": f"{lang['id_prefix']}01",
+                    "title": "",
+                    "prefix": lang["id_prefix"],
+                    "lang": lang,
+                    "ship": "YES",
+                    "hook": 0,
+                    "punch": 0,
+                    "local_fit": 0,
+                    "remake_risk": 0,
+                    "premise": "",
+                    "hook_line": "",
+                    "card": _slice_stories_for_language(stories, lang),
+                }
             )
-            for lang in STORY_LANGUAGES
-        ]
-    )
+
+    # Generate in waves to avoid hammering the LLM provider. :-)
+    batches: List[str] = []
+    wave = 4
+    for i in range(0, len(selected), wave):
+        chunk = selected[i : i + wave]
+        parts = await asyncio.gather(
+            *[
+                _produce_script_for_story(
+                    brief=brief,
+                    story=story,
+                    project_name=project_name,
+                    goal=goal,
+                )
+                for story in chunk
+            ]
+        )
+        batches.extend(parts)
     return assemble_scripts_markdown(batches)
 
 
