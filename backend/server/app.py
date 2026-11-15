@@ -285,6 +285,10 @@ async def produce_project_pack(project_id: str, request: Request):
     except Exception:
         data = {}
     research_markdown = str((data or {}).get("research_markdown") or "").strip()
+    raw_sections = (data or {}).get("sections")
+    sections = None
+    if isinstance(raw_sections, list) and raw_sections:
+        sections = [str(s).strip().lower() for s in raw_sections if str(s).strip()]
     if not research_markdown:
         # Prefer an existing research_report.md in the project docs. :-)
         docs_dir = project_store.docs_dir(user, project_id)
@@ -302,6 +306,7 @@ async def produce_project_pack(project_id: str, request: Request):
             research_markdown=research_markdown,
             project_name=str(project.get("name") or "Comedy channel"),
             goal=str(project.get("description") or ""),
+            sections=sections,
         )
         result = await save_pack_to_project(
             project_store,
