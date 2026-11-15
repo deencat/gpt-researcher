@@ -15,6 +15,7 @@ from .render import (
     markets_present_in_text,
     single_market_write_target,
 )
+from .produce_pack import produce_comedy_pack_markdown, save_pack_to_project
 from .schema import AppliedPlaybook, PlaybookSection, PlaybookTemplate
 
 __all__ = [
@@ -35,5 +36,7 @@ __all__ = [
     "markets_present_in_text",
     "merge_start_payload",
     "parse_playbook_dict",
+    "produce_comedy_pack_markdown",
+    "save_pack_to_project",
     "single_market_write_target",
 ]

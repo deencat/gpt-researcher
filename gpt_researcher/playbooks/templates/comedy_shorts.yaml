@@ -16,6 +16,10 @@ report_source: web
 report_format: markdown
 total_words: 900
 output_format: markdown_brief
+# After research, call POST /api/projects/{id}/produce-pack to split into
+# 01_Plan.md, 02_Stories.md, 03_Scripts.md (Hermes-style channel pack).
+# Stories: 10 scored ideas per language (EN / 粵語 / 普通话 / 國語) = 40 total.
+# Optional body: {"sections": ["stories"]} to regenerate only the story list.
 
 languages:
   - en

@@ -74,6 +74,16 @@ export const deleteProjectDocument = async (projectId: string, filename: string)
   if (!res.ok) throwForResponse(res, 'Could not remove this document.');
 };
 
+/** Split a research brief into Plan / Stories / Scripts project documents. :-) */
+export const produceProjectPack = async (projectId: string, researchMarkdown?: string) =>
+  json<{ files?: string[]; project?: Project; pack_keys?: string[] }>(
+    await fetch(`/api/projects/${encodeURIComponent(projectId)}/produce-pack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(researchMarkdown ? { research_markdown: researchMarkdown } : {}),
+    }),
+  );
+
 export const getMe = async () => {
   try {
     return (await json<{ email?: string }>(await fetch('/api/me', { cache: 'no-store' }))).email ?? '';

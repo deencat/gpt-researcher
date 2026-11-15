@@ -267,6 +267,72 @@ async def delete_project_document(project_id: str, filename: str, request: Reque
     return {"success": True}
 
 
+@app.post("/api/projects/{project_id}/produce-pack")
+async def produce_project_pack(project_id: str, request: Request):
+    """Turn research markdown into Plan / Stories / Scripts project documents. :-)"""
+    from gpt_researcher.playbooks.produce_pack import (
+        produce_comedy_pack_markdown,
+        save_pack_to_project,
+    )
+
+    user = require_user(request)
+    project = await project_store.get_project(user, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    research_markdown = str((data or {}).get("research_markdown") or "").strip()
+    raw_sections = (data or {}).get("sections")
+    sections = None
+    if isinstance(raw_sections, list) and raw_sections:
+        sections = [str(s).strip().lower() for s in raw_sections if str(s).strip()]
+    docs_dir = project_store.docs_dir(user, project_id)
+    if not research_markdown:
+        # Prefer an existing research_report.md in the project docs. :-)
+        report_path = docs_dir / "research_report.md"
+        if report_path.exists():
+            research_markdown = report_path.read_text(encoding="utf-8", errors="replace")
+    if not research_markdown.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Provide research_markdown or upload research_report.md first",
+        )
+
+    # Ground scripts in the 40-story backlog when regenerating scripts only. :-)
+    stories_markdown = str((data or {}).get("stories_markdown") or "").strip()
+    if not stories_markdown:
+        stories_path = docs_dir / "02_Stories.md"
+        if stories_path.exists():
+            stories_markdown = stories_path.read_text(encoding="utf-8", errors="replace")
+
+    try:
+        pack = await produce_comedy_pack_markdown(
+            research_markdown=research_markdown,
+            project_name=str(project.get("name") or "Comedy channel"),
+            goal=str(project.get("description") or ""),
+            sections=sections,
+            stories_markdown=stories_markdown or None,
+        )
+        result = await save_pack_to_project(
+            project_store,
+            user,
+            project_id,
+            pack,
+            research_markdown=None,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pack production failed: {e}") from e
+
+    return {
+        "files": result.get("files") or [],
+        "project": result.get("project"),
+        "pack_keys": list(pack.keys()),
+    }
+
+
 # Simplified API routes - no database persistence
 @app.get("/api/playbooks")
 async def list_playbooks_api(request: Request):
