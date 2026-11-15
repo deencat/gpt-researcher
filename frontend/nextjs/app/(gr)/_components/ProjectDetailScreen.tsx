@@ -9,6 +9,7 @@ import {
   deleteProjectDocument,
   getProject,
   isAuthError,
+  produceProjectPack,
   updateProject,
   uploadProjectDocument,
   type Project,
@@ -39,6 +40,7 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
   const [coachDismissed, setCoachDismissed] = useState(false);
   const [starterPrompts, setStarterPrompts] = useState<string[]>([]);
   const [documentIdeas, setDocumentIdeas] = useState<string[]>([]);
+  const [producing, setProducing] = useState(false);
 
   const markAuth = (error: unknown) => {
     setAuthMessage(authErrorMessage(error));
@@ -218,6 +220,37 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
         <div className="flex flex-wrap gap-2">
           <button type="button" className="gr-btn h-10 px-4" onClick={() => researchHere()}>
             Research in project
+          </button>
+          <button
+            type="button"
+            className="gr-btn-line h-10 px-4"
+            disabled={producing || !(project?.documents || []).includes('research_report.md')}
+            title={
+              (project?.documents || []).includes('research_report.md')
+                ? 'Turn research_report.md into Plan, Stories, and Scripts'
+                : 'Upload or save research_report.md first'
+            }
+            onClick={() => {
+              void (async () => {
+                setProducing(true);
+                setNote('');
+                try {
+                  const result = await produceProjectPack(projectId);
+                  setNote(`Pack ready: ${(result.files || []).join(', ') || 'Plan, Stories, Scripts'}`);
+                  await refresh();
+                } catch (e) {
+                  if (isAuthError(e)) {
+                    markAuth(e);
+                    return;
+                  }
+                  setNote(authErrorMessage(e));
+                } finally {
+                  setProducing(false);
+                }
+              })();
+            }}
+          >
+            {producing ? 'Producing pack…' : 'Produce pack'}
           </button>
           <button type="button" className="gr-btn-line h-10 px-4" disabled={saving} onClick={() => void save()}>
             Save

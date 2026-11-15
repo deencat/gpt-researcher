@@ -16,6 +16,8 @@ report_source: web
 report_format: markdown
 total_words: 900
 output_format: markdown_brief
+# After research, call POST /api/projects/{id}/produce-pack to split into
+# 01_Plan.md, 02_Stories.md, 03_Scripts.md (Hermes-style channel pack).
 
 languages:
   - en
