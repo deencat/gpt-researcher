@@ -7,6 +7,8 @@ from gpt_researcher.playbooks.produce_pack import (
     STORIES_PER_LANGUAGE,
     STORY_LANGUAGES,
     _extract_json,
+    _slice_stories_for_language,
+    assemble_scripts_markdown,
     assemble_stories_markdown,
 )
 
@@ -49,4 +51,29 @@ def test_assemble_stories_markdown_joins_batches():
     )
     assert md.startswith("# Comedy Channel — Scored Story List")
     assert "40 total" in md
+    assert "EN01" in md and "YUE01" in md
+
+
+def test_slice_stories_for_language():
+    md = (
+        "# Comedy Channel — Scored Story List\n\n"
+        "## English (EN) — 10 stories\n\n1. **EN01 — Trim**\n\n"
+        "## Hong Kong Cantonese (粵語) — 10 stories\n\n1. **YUE01 — Speed**\n\n"
+        "## Mainland Mandarin (普通话) — 10 stories\n\n1. **CMN01 — Bao**\n\n"
+        "## Taiwan Mandarin (國語) — 10 stories\n\n1. **TW01 — Micro**\n"
+    )
+    en = _slice_stories_for_language(md, STORY_LANGUAGES[0])
+    yue = _slice_stories_for_language(md, STORY_LANGUAGES[1])
+    assert "EN01" in en and "YUE01" not in en
+    assert "YUE01" in yue and "EN01" not in yue
+
+
+def test_assemble_scripts_markdown():
+    md = assemble_scripts_markdown(
+        [
+            '## Script (EN01): “Trim” (40s, English)\nCast: A',
+            '## Script (YUE01): “Speed” (30s, 粵語)\nCast: B',
+        ]
+    )
+    assert md.startswith("# Comedy Channel — Shootable Scripts")
     assert "EN01" in md and "YUE01" in md

@@ -289,9 +289,9 @@ async def produce_project_pack(project_id: str, request: Request):
     sections = None
     if isinstance(raw_sections, list) and raw_sections:
         sections = [str(s).strip().lower() for s in raw_sections if str(s).strip()]
+    docs_dir = project_store.docs_dir(user, project_id)
     if not research_markdown:
         # Prefer an existing research_report.md in the project docs. :-)
-        docs_dir = project_store.docs_dir(user, project_id)
         report_path = docs_dir / "research_report.md"
         if report_path.exists():
             research_markdown = report_path.read_text(encoding="utf-8", errors="replace")
@@ -301,12 +301,20 @@ async def produce_project_pack(project_id: str, request: Request):
             detail="Provide research_markdown or upload research_report.md first",
         )
 
+    # Ground scripts in the 40-story backlog when regenerating scripts only. :-)
+    stories_markdown = str((data or {}).get("stories_markdown") or "").strip()
+    if not stories_markdown:
+        stories_path = docs_dir / "02_Stories.md"
+        if stories_path.exists():
+            stories_markdown = stories_path.read_text(encoding="utf-8", errors="replace")
+
     try:
         pack = await produce_comedy_pack_markdown(
             research_markdown=research_markdown,
             project_name=str(project.get("name") or "Comedy channel"),
             goal=str(project.get("description") or ""),
             sections=sections,
+            stories_markdown=stories_markdown or None,
         )
         result = await save_pack_to_project(
             project_store,
