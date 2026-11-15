@@ -20,7 +20,7 @@ describe('ProjectSetupCoach', () => {
     );
 
     // Goal → languages → formats → materials → constraints → review
-    await user.type(screen.getByPlaceholderText(/multilingual joke/i), 'Build a joke bank');
+    await user.type(screen.getByPlaceholderText(/seoul itinerary|research brief/i), 'Build a joke bank');
     await user.click(screen.getByRole('button', { name: /^continue$/i }));
     // languages may already be guessed from title; ensure at least one then continue
     const continueBtn = screen.getByRole('button', { name: /^continue$/i });

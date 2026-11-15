@@ -116,7 +116,7 @@ export default function ProjectSetupCoach({
               onChange={(e) => setAnswers({ ...answers, goal: e.target.value })}
               rows={4}
               className="mt-2 w-full border border-rule-soft bg-paper px-3 py-2 text-[14.5px] outline-none focus:border-ink"
-              placeholder="e.g. A multilingual joke & format library for world-class funny shorts…"
+              placeholder="e.g. Plan a 6-day Seoul itinerary, or a weekly research brief for my niche…"
             />
           </label>
         )}
