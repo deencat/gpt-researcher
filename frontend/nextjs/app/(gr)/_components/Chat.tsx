@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { suggestFollowUps } from '@/lib/research/followUps';
 import type { RunState } from '@/lib/research/run';
 import { useCitedHtml } from './Sheet';
 import { copyText } from './clipboard';
@@ -59,8 +60,6 @@ export function useChat(report: string, initial: ChatMessage[] = []) {
 }
 
 export type Chat = ReturnType<typeof useChat>;
-
-const SUGGESTED = ['What could stop the rally?', 'How much of the revenue comes from data centers?', 'What would change this conclusion?'];
 
 function Thinking() {
   const [s, setS] = useState(0);
@@ -122,10 +121,49 @@ function Answer({ message, run, chat }: { message: ChatMessage; run: RunState; c
   );
 }
 
+function SuggestedList({
+  questions,
+  disabled,
+  onAsk,
+  heading,
+}: {
+  questions: string[];
+  disabled?: boolean;
+  onAsk: (q: string) => void;
+  heading?: string;
+}) {
+  if (!questions.length) return null;
+  return (
+    <div className={heading ? 'mt-6' : undefined}>
+      {heading ? <p className="mb-2 text-[12.5px] text-ink-3">{heading}</p> : null}
+      <ul className="border-t border-rule-soft">
+        {questions.map((q) => (
+          <li key={q} className="border-b border-rule-soft">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onAsk(q)}
+              className="w-full py-2.5 text-left font-display text-[15px] leading-snug transition-colors hover:text-rubric disabled:opacity-50"
+            >
+              {q}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ChatThread({ run, chat }: { run: RunState; chat: Chat }) {
   const end = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
   const ready = run.status === 'done';
+  const suggestions = useMemo(() => suggestFollowUps(run.query, run.report), [run.query, run.report]);
+  const asked = useMemo(
+    () => new Set(chat.messages.filter((m) => m.role === 'user').map((m) => m.content.trim())),
+    [chat.messages],
+  );
+  const remaining = suggestions.filter((q) => !asked.has(q.trim()));
 
   useEffect(() => {
     if (!mounted.current) {
@@ -148,33 +186,33 @@ export function ChatThread({ run, chat }: { run: RunState; chat: Chat }) {
       {chat.messages.length === 0 ? (
         <>
           <p className="text-[13.5px] leading-snug text-ink-2">Ask about this report. Answers cite its sources, and you can add the good ones to the report.</p>
-          <ul className="mt-4 border-t border-rule-soft">
-            {SUGGESTED.map((q) => (
-              <li key={q} className="border-b border-rule-soft">
-                <button type="button" onClick={() => void chat.ask(q)} className="w-full py-2.5 text-left font-display text-[15px] leading-snug transition-colors hover:text-rubric">
-                  {q}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <SuggestedList questions={remaining} disabled={chat.busy} onAsk={(q) => void chat.ask(q)} />
         </>
       ) : (
-        <ol className="space-y-6">
-          {chat.messages.map((m) =>
-            m.role === 'user' ? (
-              <li key={m.id} className="gr-in">
-                <p className="font-display text-[16px] font-semibold leading-snug">
-                  <span className="mr-1.5 font-code text-[11px] font-medium text-rubric">Q</span>
-                  {m.content}
-                </p>
-              </li>
-            ) : (
-              <li key={m.id} className="gr-in">
-                <Answer message={m} run={run} chat={chat} />
-              </li>
-            ),
-          )}
-        </ol>
+        <>
+          <ol className="space-y-6">
+            {chat.messages.map((m) =>
+              m.role === 'user' ? (
+                <li key={m.id} className="gr-in">
+                  <p className="font-display text-[16px] font-semibold leading-snug">
+                    <span className="mr-1.5 font-code text-[11px] font-medium text-rubric">Q</span>
+                    {m.content}
+                  </p>
+                </li>
+              ) : (
+                <li key={m.id} className="gr-in">
+                  <Answer message={m} run={run} chat={chat} />
+                </li>
+              ),
+            )}
+          </ol>
+          <SuggestedList
+            questions={remaining}
+            disabled={chat.busy}
+            onAsk={(q) => void chat.ask(q)}
+            heading="More questions about this report"
+          />
+        </>
       )}
       <div ref={end} />
     </div>
