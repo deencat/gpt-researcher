@@ -3,7 +3,11 @@ import aiohttp
 import tempfile
 from urllib.parse import urlsplit
 
-from gpt_researcher.document.document import detect_utf8
+from gpt_researcher.document.document import (
+    IMAGE_EXTENSIONS,
+    detect_utf8,
+    load_image_as_documents,
+)
 from gpt_researcher.utils.url_security import UnsafeURLError, validate_url
 from langchain_community.document_loaders import (
     PyMuPDFLoader,
@@ -78,22 +82,25 @@ class OnlineDocumentLoader:
     async def _load_document(self, file_path: str, file_extension: str) -> list:
         ret_data = []
         try:
-            encoding = detect_utf8(file_path) if file_extension == "txt" else None
-            loader_dict = {
-                "pdf": PyMuPDFLoader(file_path),
-                "txt": TextLoader(file_path, encoding=encoding),
-                "doc": UnstructuredWordDocumentLoader(file_path),
-                "docx": UnstructuredWordDocumentLoader(file_path),
-                "pptx": UnstructuredPowerPointLoader(file_path),
-                "csv": UnstructuredCSVLoader(file_path, mode="elements"),
-                "xls": UnstructuredExcelLoader(file_path, mode="elements"),
-                "xlsx": UnstructuredExcelLoader(file_path, mode="elements"),
-                "md": UnstructuredMarkdownLoader(file_path)
-            }
+            if file_extension in IMAGE_EXTENSIONS:
+                ret_data = await load_image_as_documents(file_path)
+            else:
+                encoding = detect_utf8(file_path) if file_extension == "txt" else None
+                loader_dict = {
+                    "pdf": PyMuPDFLoader(file_path),
+                    "txt": TextLoader(file_path, encoding=encoding),
+                    "doc": UnstructuredWordDocumentLoader(file_path),
+                    "docx": UnstructuredWordDocumentLoader(file_path),
+                    "pptx": UnstructuredPowerPointLoader(file_path),
+                    "csv": UnstructuredCSVLoader(file_path, mode="elements"),
+                    "xls": UnstructuredExcelLoader(file_path, mode="elements"),
+                    "xlsx": UnstructuredExcelLoader(file_path, mode="elements"),
+                    "md": UnstructuredMarkdownLoader(file_path)
+                }
 
-            loader = loader_dict.get(file_extension, None)
-            if loader:
-                ret_data = loader.load()
+                loader = loader_dict.get(file_extension, None)
+                if loader:
+                    ret_data = loader.load()
 
         except Exception as e:
             print(f"Failed to load document : {file_path}")
