@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { RunState } from '@/lib/research/run';
 import { ChatComposer, ChatThread, useChat, type Chat, type ChatMessage } from './Chat';
+import { ComputerDesktop } from './ComputerDesktop';
 import { copyText } from './clipboard';
 import { FaviconStack, domainsBySources } from './Favicon';
 import Lightbox from './Lightbox';
@@ -12,7 +13,7 @@ import Sources, { sourcesSummary } from './Sources';
 import { StageList, StageStrip, stageTime, statusWord } from './Stages';
 import { clock } from './ui';
 
-export type Tab = 'sources' | 'chat';
+export type Tab = 'sources' | 'chat' | 'computer';
 
 const WIDE = '(min-width: 1200px)';
 
@@ -315,11 +316,13 @@ function Margin({
   const tabs: { id: Tab; label: string }[] = [
     { id: 'sources', label: 'Sources' },
     { id: 'chat', label: asked ? `Chat ${asked}` : 'Chat' },
+    { id: 'computer', label: 'Computer' },
   ];
+  const order: Tab[] = tabs.map((t) => t.id);
 
   return (
     <div id="margin" className="flex scroll-mt-20 flex-col min-[768px]:sticky min-[768px]:top-[136px] min-[768px]:max-h-[calc(100vh-152px)]">
-      <div role="tablist" aria-label="Sources and chat" className="flex items-end gap-5 border-b border-ink">
+      <div role="tablist" aria-label="Sources, chat, and computer" className="flex items-end gap-5 border-b border-ink">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -332,7 +335,8 @@ function Margin({
             onClick={() => onTab(t.id)}
             onKeyDown={(e) => {
               if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-              const next = tab === 'sources' ? 'chat' : 'sources';
+              const i = order.indexOf(tab);
+              const next = order[(i + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length];
               onTab(next);
               document.getElementById(`tab-${next}`)?.focus();
             }}
@@ -346,7 +350,13 @@ function Margin({
         <p className="border-b border-rule-soft py-2 font-code text-[11px] tabular-nums text-ink-2">{sourcesSummary(run)}</p>
       )}
       <div id="margin-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} data-scroll-box className="gr-scroll min-h-0 flex-1 overflow-auto">
-        {tab === 'sources' ? <Sources run={run} highlight={highlight} onHighlight={onHighlight} /> : <ChatThread run={run} chat={chat} />}
+        {tab === 'sources' ? (
+          <Sources run={run} highlight={highlight} onHighlight={onHighlight} />
+        ) : tab === 'computer' ? (
+          <ComputerDesktop />
+        ) : (
+          <ChatThread run={run} chat={chat} />
+        )}
       </div>
       {tab === 'chat' && <ChatComposer run={run} chat={chat} />}
     </div>

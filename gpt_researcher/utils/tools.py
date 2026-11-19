@@ -8,6 +8,7 @@ tools seamlessly.
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Tuple, Callable, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.tools import tool
@@ -111,99 +112,105 @@ async def create_chat_completion_with_tools(
         
         # For tool calling, we need to handle the full conversation including tool responses
         from langchain_core.messages import ToolMessage
-        
-        # First call to LLM
-        response = await llm_with_tools.ainvoke(lc_messages)
-        _track_response_cost(
-            llm_provider=llm_provider,
-            model=model,
-            input_payload=lc_messages,
-            response_message=response,
-            request_options=provider_kwargs,
-            cost_callback=cost_callback,
-        )
-        
-        # Process tool calls if any were made
-        tool_calls_metadata = []
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            logger.info(f"LLM made {len(response.tool_calls)} tool calls")
-            
-            # Add the assistant's response with tool calls to the conversation
-            lc_messages.append(response)
-            
-            # Execute each tool call and add results to conversation
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.get('name', 'unknown')
-                tool_args = tool_call.get('args', {})
-                tool_id = tool_call.get('id', '')
-                
-                logger.info(f"Tool called: {tool_name}")
-                if tool_args:
-                    args_str = ", ".join([f"{k}={v}" for k, v in tool_args.items()])
-                    logger.debug(f"Tool arguments: {args_str}")
-                
-                # Find and execute the tool
-                tool_result = "Tool execution failed"
-                for tool in tools:
-                    if tool.name == tool_name:
-                        try:
-                            if hasattr(tool, 'ainvoke'):
-                                tool_result = await tool.ainvoke(tool_args)
-                            elif hasattr(tool, 'invoke'):
-                                tool_result = tool.invoke(tool_args)
-                            else:
-                                tool_result = await tool(**tool_args) if asyncio.iscoroutinefunction(tool) else tool(**tool_args)
-                            break
-                        except Exception as e:
-                            error_type = type(e).__name__
-                            error_msg = str(e)
-                            logger.error(
-                                f"Error executing tool '{tool_name}': {error_type}: {error_msg}",
-                                exc_info=True
-                            )
-                            # Provide user-friendly error message
-                            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                                tool_result = f"Tool '{tool_name}' timed out. The operation took too long to complete. Please try again or check your network connection."
-                            elif "connection" in error_msg.lower() or "network" in error_msg.lower():
-                                tool_result = f"Tool '{tool_name}' failed due to a network issue. Please check your internet connection and try again."
-                            elif "permission" in error_msg.lower() or "access" in error_msg.lower():
-                                tool_result = f"Tool '{tool_name}' failed due to insufficient permissions. Please check your API keys or access credentials."
-                            else:
-                                tool_result = f"Tool '{tool_name}' encountered an error: {error_msg}. Please check the logs for more details."
-                
-                # Add tool result to conversation
-                tool_message = ToolMessage(content=str(tool_result), tool_call_id=tool_id)
-                lc_messages.append(tool_message)
-                
-                # Add to metadata
-                tool_calls_metadata.append({
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "call_id": tool_id,
-                    "result": str(tool_result)[:200] + "..." if len(str(tool_result)) > 200 else str(tool_result)
-                })
-            
-            # Get final response from LLM after tool execution
-            logger.info("Getting final response from LLM after tool execution")
-            final_response = await llm_with_tools.ainvoke(lc_messages)
-             
-            # Track costs if callback provided
+
+        def _message_text(msg: Any) -> str:
+            """Extract plain text from LangChain / Responses-API style messages."""
+            text = getattr(msg, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text
+            content = getattr(msg, "content", None)
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts: List[str] = []
+                for block in content:
+                    if isinstance(block, str):
+                        parts.append(block)
+                    elif isinstance(block, dict):
+                        if block.get("type") in {None, "text"} and block.get("text"):
+                            parts.append(str(block.get("text")))
+                    else:
+                        t = getattr(block, "text", None)
+                        if t:
+                            parts.append(str(t))
+                return "".join(parts)
+            return ""
+
+        tool_calls_metadata: List[Dict[str, Any]] = []
+        max_rounds = int(os.getenv("COMPUTER_USE_CHAT_ROUNDS", "6"))
+        response = None
+        for round_i in range(max_rounds):
+            response = await llm_with_tools.ainvoke(lc_messages)
             _track_response_cost(
                 llm_provider=llm_provider,
                 model=model,
                 input_payload=lc_messages,
-                response_message=final_response,
+                response_message=response,
                 request_options=provider_kwargs,
                 cost_callback=cost_callback,
             )
-             
-            # With tools bound, some models answer through the Responses API, whose content is a list of blocks :-)
-            return final_response.text, tool_calls_metadata
-         
-        else:
-            # No tool calls, return regular response
-            return response.text, []
-        
+            calls = getattr(response, "tool_calls", None) or []
+            if not calls:
+                text = _message_text(response)
+                if text.strip():
+                    return text, tool_calls_metadata
+                break
+
+            logger.info("LLM made %s tool calls (round %s)", len(calls), round_i + 1)
+            lc_messages.append(response)
+            for tool_call in calls:
+                tool_name = tool_call.get("name", "unknown")
+                tool_args = tool_call.get("args", {}) or {}
+                tool_id = tool_call.get("id", "")
+                tool_result = "Tool execution failed"
+                matched = False
+                for tool in tools:
+                    if getattr(tool, "name", None) != tool_name:
+                        continue
+                    matched = True
+                    try:
+                        if hasattr(tool, "ainvoke"):
+                            tool_result = await tool.ainvoke(tool_args)
+                        elif hasattr(tool, "invoke"):
+                            tool_result = tool.invoke(tool_args)
+                        else:
+                            tool_result = (
+                                await tool(**tool_args)
+                                if asyncio.iscoroutinefunction(tool)
+                                else tool(**tool_args)
+                            )
+                    except Exception as e:
+                        error_msg = str(e)
+                        logger.error(
+                            f"Error executing tool '{tool_name}': {type(e).__name__}: {error_msg}",
+                            exc_info=True,
+                        )
+                        tool_result = f"Tool '{tool_name}' encountered an error: {error_msg}"
+                    break
+                if not matched:
+                    tool_result = f"Tool '{tool_name}' is not available."
+
+                tool_result_str = str(tool_result)
+                lc_messages.append(ToolMessage(content=tool_result_str, tool_call_id=tool_id))
+                tool_calls_metadata.append({
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "call_id": tool_id,
+                    "result": (
+                        tool_result_str[:200] + "..."
+                        if len(tool_result_str) > 200
+                        else tool_result_str
+                    ),
+                })
+
+        # Empty model text after tools → still show tool outcomes so chat is not a dead end. :-)
+        if tool_calls_metadata:
+            bits = ["I ran computer/browser tools but the model returned no final text. Results:"]
+            for meta in tool_calls_metadata[-4:]:
+                bits.append(f"- **{meta['tool']}** `{meta.get('args')}` → `{meta.get('result')}`")
+            return "\n".join(bits), tool_calls_metadata
+        return _message_text(response) if response is not None else "", []
+
     except Exception as e:
         error_type = type(e).__name__
         error_msg = str(e)
@@ -288,10 +295,13 @@ def create_computer_use_tool() -> Callable:
         selector: str = "",
         session_id: str = "default",
     ) -> str:
-        """Drive a headless browser lab or run short Python when research needs interactive steps.
+        """Drive an isolated desktop browser or run short Python for interactive steps.
 
-        Actions: navigate, snapshot, click, type, scroll, extract, screenshot, run_python, close.
-        Prefer snapshot then click(ref='eN'). For run_python pass code= and read stdout.
+        Actions: status, start, navigate, snapshot, click, type, scroll, extract,
+        screenshot, run_python, close.
+        Prefer status/start first in isolated mode, then navigate → snapshot →
+        click(ref='eN') or extract. Always finish by answering the user with the
+        extracted text (do not stop after only calling the tool).
         """
         args = {
             "action": action,

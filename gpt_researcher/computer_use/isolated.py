@@ -36,6 +36,20 @@ NOVNC_PORT = int(os.environ.get("GPTR_ISOLATED_NOVNC_PORT") or "6901")
 CDP_PORT = int(os.environ.get("GPTR_ISOLATED_CDP_PORT") or "9222")
 VNC_PW = (os.environ.get("GPTR_ISOLATED_VNC_PW") or "gptrlab").strip() or "gptrlab"
 RESOLUTION = os.environ.get("GPTR_ISOLATED_RESOLUTION") or "1280x800x24"
+# Public browser URL (nginx path). Example:
+# https://research.hexsenses.com/computer/<token>/vnc.html?...
+PUBLIC_EMBED_URL = (os.environ.get("GPTR_ISOLATED_PUBLIC_EMBED_URL") or "").strip()
+
+
+def _embed_url(*, running: bool) -> Optional[str]:
+    if not running:
+        return None
+    if PUBLIC_EMBED_URL:
+        return PUBLIC_EMBED_URL
+    return (
+        f"http://127.0.0.1:{NOVNC_PORT}/vnc.html"
+        f"?autoconnect=1&reconnect=1&resize=off&password={VNC_PW}"
+    )
 
 _BLOCKED_HOSTS = {
     "localhost",
@@ -106,12 +120,7 @@ def status() -> Dict[str, Any]:
         "running": running,
         "novncPort": NOVNC_PORT,
         "cdpPort": CDP_PORT,
-        "embedUrl": (
-            f"http://127.0.0.1:{NOVNC_PORT}/vnc.html"
-            f"?autoconnect=1&reconnect=1&resize=off&password={VNC_PW}"
-            if running
-            else None
-        ),
+        "embedUrl": _embed_url(running=running),
         "source": (
             "Batch3-UAT-Migration-Dashboard/batch3_live/isolated_computer.py "
             "(Cinebot/Grok-style isolated desktop)"

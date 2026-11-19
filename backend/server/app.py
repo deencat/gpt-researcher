@@ -548,6 +548,33 @@ async def websocket_endpoint(websocket: WebSocket):
         # Release the connection's queue and sender task however the loop ended.
         await manager.disconnect(websocket)
 
+@app.get("/api/computer-use/status")
+async def computer_use_status():
+    """Status of the isolated / Playwright computer lab (for the desktop panel)."""
+    enabled = os.environ.get("COMPUTER_USE_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return JSONResponse({"ok": True, "enabled": False, "ready": False})
+    from gpt_researcher.computer_use.actions import computer_use_mode, handle_computer_use
+
+    mode = computer_use_mode()
+    status = await handle_computer_use({"action": "status"})
+    status["enabled"] = True
+    status["mode"] = status.get("mode") or mode
+    return JSONResponse(status)
+
+
+@app.post("/api/computer-use/start")
+async def computer_use_start():
+    """Start the isolated desktop container if needed."""
+    enabled = os.environ.get("COMPUTER_USE_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return JSONResponse({"ok": False, "error": "COMPUTER_USE_ENABLED is off"}, status_code=400)
+    from gpt_researcher.computer_use.actions import handle_computer_use
+
+    result = await handle_computer_use({"action": "start"})
+    return JSONResponse(result)
+
+
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest):
     """Process a chat request with a report and message history.

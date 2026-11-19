@@ -61,7 +61,15 @@ COMPUTER_USE_MODE=isolated
 # GPTR_ISOLATED_VNC_PW=gptrlab
 ```
 
-First `status` / `start` / `navigate` pulls and runs the container. Open the returned `embedUrl` (noVNC) to watch the desktop.
+First `status` / `start` / `navigate` pulls and runs the container. Open the returned `embedUrl` (noVNC) to watch the desktop — or use the **Computer** tab in a research run.
+
+Set a public embed URL behind nginx (example):
+
+```bash
+GPTR_ISOLATED_PUBLIC_EMBED_URL=https://research.hexsenses.com/computer/<token>/vnc.html?autoconnect=1&reconnect=1&resize=scale&path=computer/<token>/websockify&password=gptrlab
+```
+
+**Important:** Running a normal research report inside a named project (e.g. “首爾之旅”) writes a *report about* your prompt and keeps that project’s mission framing. Computer use is the **Computer** tab + chat tool — not a research report.
 
 For **research runs**, add the MCP preset **Computer use** in Settings (`python -m gpt_researcher.computer_use`).
 
