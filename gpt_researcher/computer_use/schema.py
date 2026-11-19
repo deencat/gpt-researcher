@@ -36,8 +36,12 @@ COMPUTER_USE_SCHEMA: Dict[str, Any] = {
                     "screenshot",
                     "run_python",
                     "close",
+                    "stop",
                 ],
-                "description": "Which computer-use action to perform.",
+                "description": (
+                    "Which computer-use action to perform. "
+                    "close=detach automation (desktop stays up); stop=destroy desktop."
+                ),
             },
             "url": {
                 "type": "string",

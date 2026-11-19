@@ -130,6 +130,7 @@ async def handle_computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
                 "extract",
                 "screenshot",
                 "close",
+                "stop",
             }:
                 return await isolated.handle_isolated(args)
 

@@ -298,10 +298,10 @@ def create_computer_use_tool() -> Callable:
         """Drive an isolated desktop browser or run short Python for interactive steps.
 
         Actions: status, start, navigate, snapshot, click, type, scroll, extract,
-        screenshot, run_python, close.
-        Prefer status/start first in isolated mode, then navigate → snapshot →
-        click(ref='eN') or extract. Always finish by answering the user with the
-        extracted text (do not stop after only calling the tool).
+        screenshot, run_python, close (detach only), stop (destroy desktop).
+        Prefer status/start, then navigate → extract (or snapshot → click).
+        Do NOT call stop/close until the user is done watching the desktop.
+        Always finish by answering with the extracted text.
         """
         args = {
             "action": action,

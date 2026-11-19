@@ -39,6 +39,9 @@ RESOLUTION = os.environ.get("GPTR_ISOLATED_RESOLUTION") or "1280x800x24"
 # Public browser URL (nginx path). Example:
 # https://research.hexsenses.com/computer/<token>/vnc.html?...
 PUBLIC_EMBED_URL = (os.environ.get("GPTR_ISOLATED_PUBLIC_EMBED_URL") or "").strip()
+# Optional overrides when backend runs in Docker (127.0.0.1 is the wrong host).
+CDP_URL_OVERRIDE = (os.environ.get("GPTR_ISOLATED_CDP_URL") or "").strip()
+NETWORK_OVERRIDE = (os.environ.get("GPTR_COMPUTER_NETWORK") or "").strip()
 
 
 def _embed_url(*, running: bool) -> Optional[str]:
@@ -50,6 +53,59 @@ def _embed_url(*, running: bool) -> Optional[str]:
         f"http://127.0.0.1:{NOVNC_PORT}/vnc.html"
         f"?autoconnect=1&reconnect=1&resize=off&password={VNC_PW}"
     )
+
+
+def _container_ip() -> Optional[str]:
+    exe = _docker()
+    if not exe or not container_running():
+        return None
+    proc = _run(
+        [
+            exe,
+            "inspect",
+            "-f",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            CONTAINER_NAME,
+        ],
+        timeout=20,
+    )
+    ip = (proc.stdout or "").strip().split()[0] if proc.returncode == 0 else ""
+    return ip or None
+
+
+def _self_networks() -> list[str]:
+    """Docker networks this process's container is on (empty if not in Docker)."""
+    exe = _docker()
+    if not exe:
+        return []
+    hostname = (os.environ.get("HOSTNAME") or "").strip()
+    if not hostname:
+        return []
+    proc = _run(
+        [
+            exe,
+            "inspect",
+            "-f",
+            "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+            hostname,
+        ],
+        timeout=20,
+    )
+    if proc.returncode != 0:
+        return []
+    return [n for n in (proc.stdout or "").split() if n]
+
+
+def _cdp_base_url() -> str:
+    """CDP endpoint reachable from this process (not always localhost)."""
+    if CDP_URL_OVERRIDE:
+        return CDP_URL_OVERRIDE.rstrip("/")
+    ip = _container_ip()
+    if ip:
+        # socat listens on 9222 inside the desktop container
+        return f"http://{ip}:9222"
+    host = (os.environ.get("GPTR_ISOLATED_CDP_HOST") or "127.0.0.1").strip()
+    return f"http://{host}:{CDP_PORT}"
 
 _BLOCKED_HOSTS = {
     "localhost",
@@ -141,25 +197,27 @@ def start_container() -> Dict[str, Any]:
     if container_running():
         return {"ok": True, "already": True, "container": CONTAINER_NAME, **status()}
     _run([exe, "rm", "-f", CONTAINER_NAME], timeout=60)
-    proc = _run(
-        [
-            exe,
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
-            "-p",
-            f"{NOVNC_PORT}:6901",
-            "-p",
-            f"{CDP_PORT}:9222",
-            "-e",
-            f"VNC_PW={VNC_PW}",
-            "-e",
-            f"VNC_RESOLUTION={RESOLUTION}",
-            IMAGE,
-        ],
-        timeout=180,
-    )
+    # Join the backend's Docker network so CDP works (127.0.0.1 is wrong in-compose).
+    networks = [NETWORK_OVERRIDE] if NETWORK_OVERRIDE else _self_networks()
+    cmd = [
+        exe,
+        "run",
+        "-d",
+        "--name",
+        CONTAINER_NAME,
+        "-p",
+        f"{NOVNC_PORT}:6901",
+        "-p",
+        f"{CDP_PORT}:9222",
+        "-e",
+        f"VNC_PW={VNC_PW}",
+        "-e",
+        f"VNC_RESOLUTION={RESOLUTION}",
+    ]
+    for net in networks[:1]:
+        cmd.extend(["--network", net])
+    cmd.append(IMAGE)
+    proc = _run(cmd, timeout=180)
     if proc.returncode != 0:
         return {"ok": False, "error": (proc.stderr or proc.stdout or "docker run failed")[:500]}
     deadline = time.time() + 40
@@ -171,18 +229,38 @@ def start_container() -> Dict[str, Any]:
                 "error": "Container exited early",
                 "logs": (logs.stdout or "")[-400:],
             }
+        ip = _container_ip()
         try:
             import urllib.request
 
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{NOVNC_PORT}/vnc.html", timeout=2
-            ) as resp:
-                if resp.status == 200:
-                    return {"ok": True, "started": True, "container": CONTAINER_NAME, **status()}
+            # Prefer container IP (works when backend is also in Docker).
+            targets = []
+            if ip:
+                targets.append(f"http://{ip}:6901/vnc.html")
+            targets.append(f"http://127.0.0.1:{NOVNC_PORT}/vnc.html")
+            for target in targets:
+                try:
+                    with urllib.request.urlopen(target, timeout=2) as resp:
+                        if resp.status == 200:
+                            return {
+                                "ok": True,
+                                "started": True,
+                                "container": CONTAINER_NAME,
+                                "cdp": _cdp_base_url(),
+                                **status(),
+                            }
+                except Exception:
+                    continue
         except Exception:
             pass
         time.sleep(1)
-    return {"ok": True, "started": True, "warning": "noVNC slow to answer", **status()}
+    return {
+        "ok": True,
+        "started": True,
+        "warning": "noVNC slow to answer",
+        "cdp": _cdp_base_url(),
+        **status(),
+    }
 
 
 def stop_container() -> Dict[str, Any]:
@@ -316,10 +394,12 @@ def launch_chromium(url: str) -> Dict[str, Any]:
         return {"ok": False, "error": (proc.stderr or proc.stdout or "chromium launch failed")[:500]}
     _ensure_input_tools()
     time.sleep(1.5)
+    global _last_url
+    _last_url = target
     return {
         "ok": True,
         "url": target,
-        "cdp": f"http://127.0.0.1:{CDP_PORT}",
+        "cdp": _cdp_base_url(),
         "embedUrl": status().get("embedUrl"),
         "message": "Chromium launched in isolated desktop — open noVNC to watch.",
     }
@@ -452,6 +532,7 @@ _cdp_pw = None
 _cdp_browser = None
 _cdp_page = None
 _cdp_elements: Dict[str, str] = {}
+_last_url: str = ""
 
 
 async def cdp_connect() -> Dict[str, Any]:
@@ -464,50 +545,75 @@ async def cdp_connect() -> Dict[str, Any]:
         started = start_container()
         if not started.get("ok"):
             return started
-    _ensure_cdp_bridge()
-    try:
-        if _cdp_page is None:
+    endpoint = _cdp_base_url()
+
+    async def _attach() -> Dict[str, Any]:
+        global _cdp_pw, _cdp_browser, _cdp_page
+        if _cdp_page is not None:
+            return {"ok": True, "url": _cdp_page.url, "cdp": endpoint}
+        _ensure_cdp_bridge()
+        if _cdp_pw is None:
             _cdp_pw = await async_playwright().start()
-            _cdp_browser = await _cdp_pw.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{CDP_PORT}"
-            )
-            contexts = _cdp_browser.contexts
-            if contexts and contexts[0].pages:
-                _cdp_page = contexts[0].pages[0]
-            else:
-                ctx = contexts[0] if contexts else await _cdp_browser.new_context()
-                _cdp_page = await ctx.new_page()
-        return {"ok": True, "url": _cdp_page.url}
+        _cdp_browser = await _cdp_pw.chromium.connect_over_cdp(endpoint)
+        contexts = _cdp_browser.contexts
+        if contexts and contexts[0].pages:
+            _cdp_page = contexts[0].pages[0]
+        else:
+            ctx = contexts[0] if contexts else await _cdp_browser.new_context()
+            _cdp_page = await ctx.new_page()
+        return {"ok": True, "url": _cdp_page.url, "cdp": endpoint}
+
+    try:
+        return await _attach()
     except Exception as e:
         launch_chromium("about:blank")
-        time.sleep(2)
+        time.sleep(2.5)
+        _ensure_cdp_bridge()
+        # Drop stale browser handle after relaunch.
+        global _cdp_browser, _cdp_page
+        _cdp_browser = _cdp_page = None
         try:
-            if _cdp_pw is None:
-                _cdp_pw = await async_playwright().start()
-            _cdp_browser = await _cdp_pw.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{CDP_PORT}"
-            )
-            contexts = _cdp_browser.contexts
-            _cdp_page = (
-                contexts[0].pages[0]
-                if contexts and contexts[0].pages
-                else await contexts[0].new_page()
-            )
-            return {"ok": True, "url": _cdp_page.url, "relaunched": True}
+            return {**(await _attach()), "relaunched": True}
         except Exception as e2:
-            return {"ok": False, "error": f"CDP connect failed: {e}; retry: {e2}"}
+            return {
+                "ok": False,
+                "error": f"CDP connect failed at {endpoint}: {e}; retry: {e2}",
+                "cdp": endpoint,
+            }
 
 
 async def cdp_navigate(url: str) -> Dict[str, Any]:
     err = _host_allowed(url)
     if err:
         return {"ok": False, "error": err}
+    # Launch Chromium in the desktop first (opens the page for humans via noVNC),
+    # then attach CDP using the container IP — not 127.0.0.1 from compose.
+    launched = launch_chromium(url)
+    if not launched.get("ok"):
+        return launched
+    time.sleep(1.5)
+    global _cdp_browser, _cdp_page
+    _cdp_browser = _cdp_page = None
     conn = await cdp_connect()
     if not conn.get("ok"):
-        return launch_chromium(url)
+        return {**launched, "cdpWarning": conn.get("error"), "via": "desktop-launch"}
     assert _cdp_page is not None
-    await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-    return {"ok": True, "url": _cdp_page.url, "title": await _cdp_page.title(), "via": "cdp"}
+    # Page may already be at url from launch; refresh via CDP for a stable handle.
+    try:
+        if (urlparse(_cdp_page.url).hostname or "") != (urlparse(url).hostname or ""):
+            await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+    except Exception:
+        await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+    global _last_url
+    _last_url = _cdp_page.url
+    return {
+        "ok": True,
+        "url": _cdp_page.url,
+        "title": await _cdp_page.title(),
+        "via": "cdp",
+        "cdp": conn.get("cdp"),
+        "embedUrl": status().get("embedUrl"),
+    }
 
 
 async def cdp_snapshot(max_elements: int = 40) -> Dict[str, Any]:
@@ -592,19 +698,76 @@ async def cdp_scroll(direction: str = "down", amount: int = 600) -> Dict[str, An
     return {"ok": True, "scrolled": direction, "amount": amount}
 
 
-async def cdp_extract(selector: Optional[str] = None) -> Dict[str, Any]:
+def extract_via_dom(url: str, selector: Optional[str] = None) -> Dict[str, Any]:
+    """Fallback extract using headless Chromium dump inside the desktop container."""
+    if not container_running():
+        return {"ok": False, "error": "Isolated computer not running"}
+    err = _host_allowed(url) if url else "missing url"
+    if err and url:
+        return {"ok": False, "error": err}
+    exe = _docker()
+    assert exe
+    target = url or "about:blank"
+    # Fetch HTML from inside the desktop container (has egress).
+    proc = _run(
+        [
+            exe,
+            "exec",
+            CONTAINER_NAME,
+            "python3",
+            "-c",
+            (
+                "import re,urllib.request\n"
+                f"html=urllib.request.urlopen({target!r}, timeout=20).read().decode('utf-8','ignore')\n"
+                f"sel={selector!r}\n"
+                "text=''\n"
+                "if sel:\n"
+                "  # naive tag extract for simple selectors like h1\n"
+                "  tag=sel.strip('#').split('.')[0].split('[')[0] or 'h1'\n"
+                "  m=re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html, re.I|re.S)\n"
+                "  if m: text=re.sub(r'<[^>]+>','',m.group(1))\n"
+                "if not text:\n"
+                "  m=re.search(r'<title[^>]*>(.*?)</title>', html, re.I|re.S)\n"
+                "  text=re.sub(r'<[^>]+>','',m.group(1)) if m else html[:2000]\n"
+                "print(re.sub(r'\\s+',' ',text).strip()[:8000])\n"
+            ),
+        ],
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return {"ok": False, "error": (proc.stderr or proc.stdout or "extract failed")[:400]}
+    text = (proc.stdout or "").strip()
+    return {"ok": True, "url": target, "text": text, "via": "container-http"}
+
+
+async def cdp_extract(selector: Optional[str] = None, url: Optional[str] = None) -> Dict[str, Any]:
+    global _last_url
     conn = await cdp_connect()
+    page_url = url or _last_url or (getattr(_cdp_page, "url", None) if _cdp_page else "") or ""
     if not conn.get("ok"):
-        return conn
+        if not page_url:
+            return {"ok": False, "error": conn.get("error") or "CDP unavailable and no URL"}
+        fallback = extract_via_dom(page_url, selector)
+        fallback["cdpWarning"] = conn.get("error")
+        return fallback
     assert _cdp_page is not None
-    if selector:
-        text = await _cdp_page.inner_text(selector, timeout=10_000)
-    else:
-        text = await _cdp_page.inner_text("body", timeout=10_000)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    if len(text) > 12_000:
-        text = text[:12_000] + "\n…[truncated]"
-    return {"ok": True, "url": _cdp_page.url, "text": text}
+    page_url = _cdp_page.url or page_url
+    _last_url = page_url
+    try:
+        if selector:
+            text = await _cdp_page.inner_text(selector, timeout=10_000)
+        else:
+            text = await _cdp_page.inner_text("body", timeout=10_000)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if len(text) > 12_000:
+            text = text[:12_000] + "\n…[truncated]"
+        return {"ok": True, "url": page_url, "text": text, "via": "cdp"}
+    except Exception as e:
+        fallback = extract_via_dom(page_url, selector) if page_url else {"ok": False}
+        if fallback.get("ok"):
+            fallback["cdpWarning"] = str(e)
+            return fallback
+        return {"ok": False, "error": str(e), "fallback": fallback}
 
 
 async def cdp_screenshot() -> Dict[str, Any]:
@@ -623,7 +786,8 @@ async def cdp_screenshot() -> Dict[str, Any]:
     return screenshot_png()
 
 
-async def cdp_close() -> Dict[str, Any]:
+async def cdp_disconnect() -> Dict[str, Any]:
+    """Detach Playwright only — keep the desktop running for the Computer tab."""
     global _cdp_pw, _cdp_browser, _cdp_page, _cdp_elements
     try:
         if _cdp_browser:
@@ -637,16 +801,26 @@ async def cdp_close() -> Dict[str, Any]:
         pass
     _cdp_pw = _cdp_browser = _cdp_page = None
     _cdp_elements = {}
-    return stop_container()
+    return {"ok": True, "disconnected": True, "running": container_running(), **status()}
+
+
+async def cdp_close() -> Dict[str, Any]:
+    """Back-compat: disconnect CDP; use action=stop to destroy the desktop."""
+    return await cdp_disconnect()
 
 
 async def handle_isolated(args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatch one action against the Batch3-style isolated desktop."""
     action = (args.get("action") or "").strip()
     if action == "status":
-        return status()
+        st = status()
+        st["cdp"] = _cdp_base_url() if st.get("running") else None
+        return st
     if action == "start":
         return start_container()
+    if action == "stop":
+        await cdp_disconnect()
+        return stop_container()
     if action == "close":
         return await cdp_close()
     if action == "navigate":
@@ -669,7 +843,7 @@ async def handle_isolated(args: Dict[str, Any]) -> Dict[str, Any]:
             amount=int(args.get("amount") or 600),
         )
     if action == "extract":
-        return await cdp_extract(args.get("selector"))
+        return await cdp_extract(args.get("selector"), url=args.get("url"))
     if action == "screenshot":
         return await cdp_screenshot()
     return {"ok": False, "error": f"unknown isolated action: {action}"}
