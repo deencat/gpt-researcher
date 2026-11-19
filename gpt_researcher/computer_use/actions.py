@@ -1,4 +1,10 @@
-"""Dispatch computer_use actions (browser + optional sandboxed Python)."""
+"""Dispatch computer_use actions (browser + optional sandboxed Python).
+
+Modes (``COMPUTER_USE_MODE``):
+
+* ``playwright`` (default) — headless Chromium on the host
+* ``isolated`` — Batch3-style Docker XFCE+Chromium+noVNC desktop
+"""
 
 from __future__ import annotations
 
@@ -27,6 +33,13 @@ _BLOCKED_CODE = [
     re.compile(r"\bshutil\b"),
     re.compile(r"\bpathlib\b"),
 ]
+
+
+def computer_use_mode() -> str:
+    raw = (os.getenv("COMPUTER_USE_MODE") or "playwright").strip().lower()
+    if raw in {"isolated", "docker", "novnc", "desktop"}:
+        return "isolated"
+    return "playwright"
 
 
 def _blocked_python(code: str) -> Optional[str]:
@@ -90,9 +103,46 @@ async def handle_computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
         if action == "run_python":
             return run_python_sandbox(args.get("code") or "")
 
+        if action == "status":
+            if computer_use_mode() == "isolated":
+                from . import isolated
+
+                return isolated.status()
+            return {
+                "ok": True,
+                "mode": "playwright",
+                "ready": True,
+                "hint": "Headless Chromium on the host. Set COMPUTER_USE_MODE=isolated for Batch3 desktop.",
+            }
+
+        if computer_use_mode() == "isolated":
+            from . import isolated
+
+            if action == "start":
+                return isolated.start_container()
+            # run_python already handled; remaining go through isolated dispatcher
+            if action in {
+                "navigate",
+                "snapshot",
+                "click",
+                "type",
+                "scroll",
+                "extract",
+                "screenshot",
+                "close",
+            }:
+                return await isolated.handle_isolated(args)
+
         if action == "close":
             await close_session(session_id)
             return {"ok": True, "closed": session_id}
+
+        if action == "start":
+            return {
+                "ok": True,
+                "mode": "playwright",
+                "message": "No container to start; browser launches on first navigate.",
+            }
 
         sess = await get_session(session_id)
 

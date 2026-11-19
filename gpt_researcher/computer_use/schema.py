@@ -1,7 +1,7 @@
-"""Tool schema for Hexsenses computer use (browser lab).
+"""Tool schema for Hexsenses computer use (browser lab + isolated desktop).
 
-Modeled on Hermes `computer_use` / browser tools and Cinebot's planned
-Playwright web automation — but Linux-VPS friendly (no macOS cua-driver).
+Modeled on Batch3 ``isolated_computer`` (Docker XFCE+Chromium+noVNC), Hermes
+browser tools, and Cinebot's Playwright plan — Linux-VPS friendly.
 """
 
 from __future__ import annotations
@@ -11,11 +11,13 @@ from typing import Any, Dict
 COMPUTER_USE_SCHEMA: Dict[str, Any] = {
     "name": "computer_use",
     "description": (
-        "Drive a headless browser lab to answer research questions that need "
-        "interactive web steps or small computations: open pages, read an "
+        "Drive a browser lab (headless Playwright, or Batch3-style isolated "
+        "Docker desktop when COMPUTER_USE_MODE=isolated) for research that "
+        "needs interactive web steps or small computations: open pages, "
         "accessibility snapshot, click/type by element ref, extract text, "
-        "take screenshots, or run short Python in a sandbox. Prefer "
-        "action='snapshot' then click(ref='eN') over guessing coordinates."
+        "screenshots, or short sandboxed Python. Prefer action='snapshot' "
+        "then click(ref='eN') over guessing coordinates. Use status/start "
+        "with isolated mode to manage the Docker desktop."
     ),
     "parameters": {
         "type": "object",
@@ -23,6 +25,8 @@ COMPUTER_USE_SCHEMA: Dict[str, Any] = {
             "action": {
                 "type": "string",
                 "enum": [
+                    "status",
+                    "start",
                     "navigate",
                     "snapshot",
                     "click",
@@ -63,6 +67,14 @@ COMPUTER_USE_SCHEMA: Dict[str, Any] = {
             "code": {
                 "type": "string",
                 "description": "For run_python: short Python script (stdout is returned).",
+            },
+            "x": {
+                "type": "integer",
+                "description": "For click without ref (isolated mode): desktop X.",
+            },
+            "y": {
+                "type": "integer",
+                "description": "For click without ref (isolated mode): desktop Y.",
             },
             "session_id": {
                 "type": "string",

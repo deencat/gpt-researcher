@@ -1,7 +1,11 @@
-"""Hexsenses computer use — Playwright browser lab + optional Python sandbox.
+"""Hexsenses computer use — Playwright lab + Batch3 isolated Docker desktop.
 
-Inspired by Hermes computer_use / browser tools and Cinebot's Playwright plan.
-Linux-VPS friendly (no macOS cua-driver).
+Modes via ``COMPUTER_USE_MODE``:
+
+* ``playwright`` — headless Chromium on the host
+* ``isolated`` — Batch3 ``isolated_computer`` pattern (XFCE+Chromium+noVNC)
+
+Also inspired by Hermes browser tools and Cinebot's Playwright plan.
 """
 
 from .actions import handle_computer_use, handle_computer_use_sync, result_as_text
