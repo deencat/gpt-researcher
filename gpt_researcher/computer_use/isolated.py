@@ -107,6 +107,41 @@ def _cdp_base_url() -> str:
     host = (os.environ.get("GPTR_ISOLATED_CDP_HOST") or "127.0.0.1").strip()
     return f"http://{host}:{CDP_PORT}"
 
+
+def _cdp_connect_endpoint() -> str:
+    """HTTP or WebSocket CDP URL, with 127.0.0.1 rewritten to the container IP.
+
+    Chromium often advertises ``ws://127.0.0.1:…`` which is unreachable from
+    the backend compose service — rewrite to the desktop container IP:9222.
+    """
+    import json
+    import urllib.request
+
+    base = _cdp_base_url()
+    ip = _container_ip()
+    try:
+        with urllib.request.urlopen(f"{base}/json/version", timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+        ws = (data.get("webSocketDebuggerUrl") or "").strip()
+        if ws and ip:
+            parsed = urlparse(ws)
+            # Keep path/query; force host:port through our socat listener.
+            hostport = f"{ip}:9222"
+            ws = parsed._replace(netloc=hostport).geturl()
+            return ws
+        if ws:
+            return ws
+    except Exception as exc:
+        logger.debug("CDP /json/version failed at %s: %s", base, exc)
+    return base
+
+
+def _reset_cdp_handles() -> None:
+    global _cdp_pw, _cdp_browser, _cdp_page, _cdp_elements
+    _cdp_browser = None
+    _cdp_page = None
+    _cdp_elements = {}
+
 _BLOCKED_HOSTS = {
     "localhost",
     "127.0.0.1",
@@ -535,7 +570,7 @@ _cdp_elements: Dict[str, str] = {}
 _last_url: str = ""
 
 
-async def cdp_connect() -> Dict[str, Any]:
+async def cdp_connect(*, force_relaunch: bool = False) -> Dict[str, Any]:
     global _cdp_pw, _cdp_browser, _cdp_page
     try:
         from playwright.async_api import async_playwright
@@ -545,13 +580,23 @@ async def cdp_connect() -> Dict[str, Any]:
         started = start_container()
         if not started.get("ok"):
             return started
-    endpoint = _cdp_base_url()
+
+    async def _page_alive() -> bool:
+        if _cdp_page is None:
+            return False
+        try:
+            _ = _cdp_page.url
+            return True
+        except Exception:
+            return False
 
     async def _attach() -> Dict[str, Any]:
         global _cdp_pw, _cdp_browser, _cdp_page
-        if _cdp_page is not None:
-            return {"ok": True, "url": _cdp_page.url, "cdp": endpoint}
+        if await _page_alive():
+            return {"ok": True, "url": _cdp_page.url, "cdp": _cdp_base_url()}
+        _reset_cdp_handles()
         _ensure_cdp_bridge()
+        endpoint = _cdp_connect_endpoint()
         if _cdp_pw is None:
             _cdp_pw = await async_playwright().start()
         _cdp_browser = await _cdp_pw.chromium.connect_over_cdp(endpoint)
@@ -563,48 +608,83 @@ async def cdp_connect() -> Dict[str, Any]:
             _cdp_page = await ctx.new_page()
         return {"ok": True, "url": _cdp_page.url, "cdp": endpoint}
 
-    try:
-        return await _attach()
-    except Exception as e:
-        launch_chromium("about:blank")
-        time.sleep(2.5)
-        _ensure_cdp_bridge()
-        # Drop stale browser handle after relaunch.
-        global _cdp_browser, _cdp_page
-        _cdp_browser = _cdp_page = None
+    # Reuse live session when possible — relaunching Chromium closes CDP.
+    if not force_relaunch:
         try:
-            return {**(await _attach()), "relaunched": True}
-        except Exception as e2:
-            return {
-                "ok": False,
-                "error": f"CDP connect failed at {endpoint}: {e}; retry: {e2}",
-                "cdp": endpoint,
-            }
+            return await _attach()
+        except Exception as e:
+            first_err = e
+    else:
+        first_err = None
+
+    launch_chromium("about:blank")
+    time.sleep(2.5)
+    _ensure_cdp_bridge()
+    _reset_cdp_handles()
+    try:
+        out = await _attach()
+        out["relaunched"] = True
+        return out
+    except Exception as e2:
+        endpoint = _cdp_base_url()
+        return {
+            "ok": False,
+            "error": f"CDP connect failed at {endpoint}: {first_err}; retry: {e2}",
+            "cdp": endpoint,
+        }
 
 
 async def cdp_navigate(url: str) -> Dict[str, Any]:
+    global _last_url
     err = _host_allowed(url)
     if err:
         return {"ok": False, "error": err}
-    # Launch Chromium in the desktop first (opens the page for humans via noVNC),
-    # then attach CDP using the container IP — not 127.0.0.1 from compose.
-    launched = launch_chromium(url)
-    if not launched.get("ok"):
-        return launched
-    time.sleep(1.5)
-    global _cdp_browser, _cdp_page
-    _cdp_browser = _cdp_page = None
+
+    # Prefer driving an existing Chromium over spawning a new one (new process
+    # invalidates the previous CDP websocket → "browser has been closed").
     conn = await cdp_connect()
     if not conn.get("ok"):
-        return {**launched, "cdpWarning": conn.get("error"), "via": "desktop-launch"}
+        launched = launch_chromium(url)
+        if not launched.get("ok"):
+            return launched
+        time.sleep(2.0)
+        _reset_cdp_handles()
+        conn = await cdp_connect()
+        if not conn.get("ok"):
+            _last_url = url
+            return {**launched, "cdpWarning": conn.get("error"), "via": "desktop-launch"}
+
     assert _cdp_page is not None
-    # Page may already be at url from launch; refresh via CDP for a stable handle.
     try:
-        if (urlparse(_cdp_page.url).hostname or "") != (urlparse(url).hostname or ""):
-            await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-    except Exception:
         await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-    global _last_url
+    except Exception as e:
+        # One recovery: relaunch Chromium with the target URL, then reattach.
+        launched = launch_chromium(url)
+        time.sleep(2.0)
+        _reset_cdp_handles()
+        conn = await cdp_connect(force_relaunch=False)
+        if not conn.get("ok") or _cdp_page is None:
+            _last_url = url
+            return {
+                "ok": bool(launched.get("ok")),
+                "url": url,
+                "error": str(e),
+                "cdpWarning": conn.get("error"),
+                "via": "desktop-launch",
+                "embedUrl": status().get("embedUrl"),
+            }
+        try:
+            await _cdp_page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        except Exception:
+            _last_url = url
+            return {
+                "ok": True,
+                "url": url,
+                "via": "desktop-launch",
+                "cdpWarning": "goto failed after relaunch; page may still be loading in VNC",
+                "embedUrl": status().get("embedUrl"),
+            }
+
     _last_url = _cdp_page.url
     return {
         "ok": True,
@@ -622,13 +702,35 @@ async def cdp_snapshot(max_elements: int = 40) -> Dict[str, Any]:
     if not conn.get("ok"):
         return conn
     assert _cdp_page is not None
+    try:
+        _ = _cdp_page.url
+    except Exception:
+        _reset_cdp_handles()
+        conn = await cdp_connect()
+        if not conn.get("ok"):
+            return conn
+        assert _cdp_page is not None
     _cdp_elements = {}
     lines: List[str] = []
     idx = 0
-    handles = await _cdp_page.query_selector_all(
-        "a, button, input, textarea, select, [role='button'], [role='link'], "
-        "[role='textbox'], [role='checkbox'], [role='menuitem']"
-    )
+    try:
+        handles = await _cdp_page.query_selector_all(
+            "a, button, input, textarea, select, [role='button'], [role='link'], "
+            "[role='textbox'], [role='checkbox'], [role='menuitem']"
+        )
+    except Exception as e:
+        if "has been closed" in str(e).lower():
+            _reset_cdp_handles()
+            conn = await cdp_connect()
+            if not conn.get("ok"):
+                return {"ok": False, "error": str(e), "cdp": conn.get("cdp")}
+            assert _cdp_page is not None
+            handles = await _cdp_page.query_selector_all(
+                "a, button, input, textarea, select, [role='button'], [role='link'], "
+                "[role='textbox'], [role='checkbox'], [role='menuitem']"
+            )
+        else:
+            return {"ok": False, "error": str(e)}
     for handle in handles:
         if idx >= max_elements:
             break
@@ -699,38 +801,44 @@ async def cdp_scroll(direction: str = "down", amount: int = 600) -> Dict[str, An
 
 
 def extract_via_dom(url: str, selector: Optional[str] = None) -> Dict[str, Any]:
-    """Fallback extract using headless Chromium dump inside the desktop container."""
+    """Fallback extract: fetch HTML from inside the desktop container."""
     if not container_running():
         return {"ok": False, "error": "Isolated computer not running"}
-    err = _host_allowed(url) if url else "missing url"
-    if err and url:
+    target = (url or "").strip()
+    if not target.startswith(("http://", "https://")):
+        return {"ok": False, "error": f"extract fallback needs http(s) URL, got {target!r}"}
+    err = _host_allowed(target)
+    if err:
         return {"ok": False, "error": err}
     exe = _docker()
     assert exe
-    target = url or "about:blank"
-    # Fetch HTML from inside the desktop container (has egress).
+    # Write script to a temp file inside the container to avoid shell quoting bugs.
+    script = (
+        "import re, urllib.request\n"
+        f"url = {target!r}\n"
+        f"sel = {selector!r}\n"
+        "req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})\n"
+        "html = urllib.request.urlopen(req, timeout=25).read().decode('utf-8', 'ignore')\n"
+        "text = ''\n"
+        "if sel:\n"
+        "    tag = sel.strip('#').split('.')[0].split('[')[0] or 'h1'\n"
+        "    m = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html, re.I | re.S)\n"
+        "    if m:\n"
+        "        text = re.sub(r'<[^>]+>', '', m.group(1))\n"
+        "if not text:\n"
+        "    m = re.search(r'<title[^>]*>(.*?)</title>', html, re.I | re.S)\n"
+        "    text = re.sub(r'<[^>]+>', '', m.group(1)) if m else html[:2000]\n"
+        "print(re.sub(r'\\s+', ' ', text).strip()[:8000])\n"
+    )
+    b64 = base64.b64encode(script.encode("utf-8")).decode("ascii")
     proc = _run(
         [
             exe,
             "exec",
             CONTAINER_NAME,
-            "python3",
-            "-c",
-            (
-                "import re,urllib.request\n"
-                f"html=urllib.request.urlopen({target!r}, timeout=20).read().decode('utf-8','ignore')\n"
-                f"sel={selector!r}\n"
-                "text=''\n"
-                "if sel:\n"
-                "  # naive tag extract for simple selectors like h1\n"
-                "  tag=sel.strip('#').split('.')[0].split('[')[0] or 'h1'\n"
-                "  m=re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html, re.I|re.S)\n"
-                "  if m: text=re.sub(r'<[^>]+>','',m.group(1))\n"
-                "if not text:\n"
-                "  m=re.search(r'<title[^>]*>(.*?)</title>', html, re.I|re.S)\n"
-                "  text=re.sub(r'<[^>]+>','',m.group(1)) if m else html[:2000]\n"
-                "print(re.sub(r'\\s+',' ',text).strip()[:8000])\n"
-            ),
+            "bash",
+            "-lc",
+            f"echo {b64} | base64 -d > /tmp/gptr_extract.py && python3 /tmp/gptr_extract.py",
         ],
         timeout=60,
     )
@@ -742,8 +850,8 @@ def extract_via_dom(url: str, selector: Optional[str] = None) -> Dict[str, Any]:
 
 async def cdp_extract(selector: Optional[str] = None, url: Optional[str] = None) -> Dict[str, Any]:
     global _last_url
+    page_url = (url or _last_url or "").strip()
     conn = await cdp_connect()
-    page_url = url or _last_url or (getattr(_cdp_page, "url", None) if _cdp_page else "") or ""
     if not conn.get("ok"):
         if not page_url:
             return {"ok": False, "error": conn.get("error") or "CDP unavailable and no URL"}
@@ -751,7 +859,16 @@ async def cdp_extract(selector: Optional[str] = None, url: Optional[str] = None)
         fallback["cdpWarning"] = conn.get("error")
         return fallback
     assert _cdp_page is not None
-    page_url = _cdp_page.url or page_url
+    try:
+        page_url = _cdp_page.url or page_url
+    except Exception:
+        _reset_cdp_handles()
+        conn = await cdp_connect()
+        if not conn.get("ok") or _cdp_page is None:
+            if page_url:
+                return extract_via_dom(page_url, selector)
+            return {"ok": False, "error": "CDP page closed"}
+        page_url = _cdp_page.url or page_url
     _last_url = page_url
     try:
         if selector:
@@ -763,11 +880,30 @@ async def cdp_extract(selector: Optional[str] = None, url: Optional[str] = None)
             text = text[:12_000] + "\n…[truncated]"
         return {"ok": True, "url": page_url, "text": text, "via": "cdp"}
     except Exception as e:
-        fallback = extract_via_dom(page_url, selector) if page_url else {"ok": False}
-        if fallback.get("ok"):
-            fallback["cdpWarning"] = str(e)
-            return fallback
-        return {"ok": False, "error": str(e), "fallback": fallback}
+        if "has been closed" in str(e).lower():
+            _reset_cdp_handles()
+            conn = await cdp_connect()
+            if conn.get("ok") and _cdp_page is not None:
+                try:
+                    if selector:
+                        text = await _cdp_page.inner_text(selector, timeout=10_000)
+                    else:
+                        text = await _cdp_page.inner_text("body", timeout=10_000)
+                    return {
+                        "ok": True,
+                        "url": _cdp_page.url,
+                        "text": re.sub(r"\n{3,}", "\n\n", text).strip()[:12000],
+                        "via": "cdp-retry",
+                    }
+                except Exception:
+                    pass
+        if page_url.startswith(("http://", "https://")):
+            fallback = extract_via_dom(page_url, selector)
+            if fallback.get("ok"):
+                fallback["cdpWarning"] = str(e)
+                return fallback
+            return {"ok": False, "error": str(e), "fallback": fallback}
+        return {"ok": False, "error": str(e)}
 
 
 async def cdp_screenshot() -> Dict[str, Any]:
