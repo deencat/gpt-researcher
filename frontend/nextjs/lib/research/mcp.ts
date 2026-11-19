@@ -34,6 +34,17 @@ export const MCP_PRESETS: McpPreset[] = [
     hint: 'A folder on the backend machine',
     server: { name: 'filesystem', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/path/to/allowed/directory'], env: {} },
   },
+  {
+    id: 'computer_use',
+    label: 'Computer use',
+    hint: 'Headless browser lab + short Python (Playwright)',
+    server: {
+      name: 'computer_use',
+      command: 'python',
+      args: ['-m', 'gpt_researcher.computer_use'],
+      env: { COMPUTER_USE_HEADLESS: 'true' },
+    },
+  },
 ];
 
 export type McpCheck =

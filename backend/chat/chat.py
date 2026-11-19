@@ -7,7 +7,11 @@ from typing import List, Dict, Any
 from gpt_researcher.config.config import Config
 from gpt_researcher.context.select import select_context
 from gpt_researcher.utils.llm import create_chat_completion
-from gpt_researcher.utils.tools import create_chat_completion_with_tools, create_search_tool
+from gpt_researcher.utils.tools import (
+    create_chat_completion_with_tools,
+    create_computer_use_tool,
+    create_search_tool,
+)
 try:
     from tavily import TavilyClient
 except ImportError:  # optional dependency for chat web search
@@ -150,11 +154,15 @@ class ChatAgentWithMemory:
             return results
 
         search_tool = create_search_tool(search_with_metadata)
-        
+        tools = [search_tool]
+        # Opt-in browser / Python lab (same computer_use as MCP research). :-)
+        if os.environ.get("COMPUTER_USE_ENABLED", "").lower() in {"1", "true", "yes", "on"}:
+            tools.append(create_computer_use_tool())
+
         # Use the tool-enabled chat completion utility
         response, tool_calls_metadata = await create_chat_completion_with_tools(
             messages=messages,
-            tools=[search_tool],
+            tools=tools,
             model=self.config.smart_llm_model,
             llm_provider=self.config.smart_llm_provider,
             llm_kwargs=self.config.llm_kwargs,
@@ -225,6 +233,9 @@ class ChatAgentWithMemory:
             You may use the quick_search tool when the user asks about information that might require current data 
             not found in the report, such as recent events, updated statistics, or news. If there's no report available,
             you can use the quick_search tool to find information online.
+
+            When computer_use is available, use it for interactive browser steps (navigate → snapshot → click/type)
+            or short run_python computations needed to answer the user — not for casual chat.
             
             You must respond in markdown format. You must make it readable with paragraphs, tables, etc when possible. 
             Remember that you're answering in a chat not a report.

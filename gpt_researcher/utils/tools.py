@@ -272,6 +272,48 @@ def create_search_tool(search_function: Callable[[str], Dict]) -> Callable:
     return search_tool
 
 
+def create_computer_use_tool() -> Callable:
+    """LangChain tool wrapping Hexsenses computer_use (browser lab + Python sandbox)."""
+    from gpt_researcher.computer_use.actions import handle_computer_use_sync, result_as_text
+
+    @tool
+    def computer_use(
+        action: str,
+        url: str = "",
+        ref: str = "",
+        text: str = "",
+        code: str = "",
+        direction: str = "down",
+        amount: int = 600,
+        selector: str = "",
+        session_id: str = "default",
+    ) -> str:
+        """Drive a headless browser lab or run short Python when research needs interactive steps.
+
+        Actions: navigate, snapshot, click, type, scroll, extract, screenshot, run_python, close.
+        Prefer snapshot then click(ref='eN'). For run_python pass code= and read stdout.
+        """
+        args = {
+            "action": action,
+            "url": url or None,
+            "ref": ref or None,
+            "text": text or None,
+            "code": code or None,
+            "direction": direction,
+            "amount": amount,
+            "selector": selector or None,
+            "session_id": session_id or "default",
+        }
+        cleaned = {k: v for k, v in args.items() if v is not None}
+        try:
+            return result_as_text(handle_computer_use_sync(cleaned))
+        except Exception as e:
+            logger.error("computer_use tool failed: %s", e, exc_info=True)
+            return f'{{"ok": false, "error": "{e}"}}'
+
+    return computer_use
+
+
 def create_custom_tool(
     name: str,
     description: str, 

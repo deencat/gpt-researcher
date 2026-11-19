@@ -61,6 +61,9 @@ htmldocx>=0.0.6
 mcp>=1.9.1,<2.0.0
 langchain-mcp-adapters>=0.1.0
 
+# Computer use browser lab (optional): pip install playwright && playwright install chromium
+playwright>=1.40.0
+
 # Data Handling
 sqlalchemy>=2.0.28
 python-multipart>=0.0.6
