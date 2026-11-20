@@ -63,7 +63,12 @@ export default function HomeScreen({
     const projectId = params.get('project');
     const q = params.get('q');
     if (q?.trim() && !question.trim()) setQuestion(q.trim());
-    if (!projectId) return;
+    // New research without ?project= must not keep a sticky project from localStorage. :-)
+    if (!projectId) {
+      setBrief((prev) => (prev.project_id ? { ...prev, project_id: undefined } : prev));
+      setProjectName('');
+      return;
+    }
     void getProject(projectId)
       .then((p) => {
         if (!p) {
@@ -90,6 +95,19 @@ export default function HomeScreen({
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only apply ?project= / ?q= once on mount
   }, []);
+
+  const leaveProject = () => {
+    setBrief((prev) => ({ ...prev, project_id: undefined }));
+    setProjectName('');
+    setProjectAuthMessage('');
+    setProjectLoadError('');
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('project')) return;
+    params.delete('project');
+    const qs = params.toString();
+    router.replace(qs ? `/?${qs}` : '/');
+  };
 
   const addFiles = (list: FileList | null) => {
     const incoming = Array.from(list ?? []);
@@ -236,7 +254,10 @@ export default function HomeScreen({
                 . Project instructions apply on every run
                 {brief.report_source === 'hybrid'
                   ? '; uploaded project documents are included with web sources.'
-                  : '; web search is used until you upload documents to this project.'}
+                  : '; web search is used until you upload documents to this project.'}{' '}
+                <button type="button" className="font-medium underline underline-offset-4 hover:text-rubric" onClick={leaveProject}>
+                  Leave project
+                </button>
               </p>
             )}
             <Brief value={brief} onChange={setBrief} openField={openField} documents={backend.status === 'online' ? backend.documents.length : undefined} />
