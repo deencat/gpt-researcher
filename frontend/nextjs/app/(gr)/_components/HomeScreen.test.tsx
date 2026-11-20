@@ -1,9 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError } from '@/lib/research/authErrors';
 
 const getProject = vi.fn();
 const setBrief = vi.fn();
+const replace = vi.fn();
 let briefValue: Record<string, unknown> = {
   report_type: 'research_report',
   report_source: 'web',
@@ -15,7 +17,7 @@ let briefValue: Record<string, unknown> = {
 };
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace, back: vi.fn(), prefetch: vi.fn() }),
   usePathname: () => '/',
 }));
 
@@ -72,6 +74,7 @@ describe('HomeScreen project bootstrap', () => {
   beforeEach(() => {
     getProject.mockReset();
     setBrief.mockReset();
+    replace.mockReset();
     briefValue = {
       report_type: 'research_report',
       report_source: 'web',
@@ -137,5 +140,44 @@ describe('HomeScreen project bootstrap', () => {
     getProject.mockRejectedValue(new AuthError(401));
     render(<HomeScreen />);
     expect(await screen.findByRole('alert')).toHaveTextContent(/session has expired/i);
+  });
+
+  it('clears a sticky project_id when home is opened without ?project=', async () => {
+    window.history.replaceState({}, '', '/');
+    briefValue = { ...briefValue, project_id: 'proj_sticky' };
+    render(<HomeScreen />);
+    await waitFor(() => expect(setBrief).toHaveBeenCalled());
+    const updater = setBrief.mock.calls[0][0];
+    expect(typeof updater).toBe('function');
+    expect(updater({ ...briefValue, project_id: 'proj_sticky' }).project_id).toBeUndefined();
+    expect(getProject).not.toHaveBeenCalled();
+  });
+
+  it('lets the user leave the project from the home banner', async () => {
+    getProject.mockResolvedValue({
+      id: 'proj_1',
+      name: 'Salon comedy',
+      description: 'x',
+      instructions: 'y',
+      documents: ['a.md'],
+      document_count: 1,
+      created_at: 1,
+      updated_at: 1,
+    });
+    setBrief.mockImplementation((fn: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      briefValue = typeof fn === 'function' ? fn(briefValue) : fn;
+    });
+    const { rerender } = render(<HomeScreen />);
+    await waitFor(() => expect(setBrief).toHaveBeenCalled());
+    briefValue = {
+      ...briefValue,
+      project_id: 'proj_1',
+      report_source: 'hybrid',
+    };
+    rerender(<HomeScreen />);
+    await screen.findByRole('link', { name: /salon comedy/i });
+    await userEvent.click(screen.getByRole('button', { name: /leave project/i }));
+    expect(briefValue.project_id).toBeUndefined();
+    expect(replace).toHaveBeenCalledWith('/');
   });
 });
