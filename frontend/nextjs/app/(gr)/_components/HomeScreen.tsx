@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { RESEARCH_FILE_ACCEPT } from '@/lib/research/files';
 import { startResearch } from '@/lib/research/live';
 import { checkMcp } from '@/lib/research/mcp';
-import { authErrorMessage, getProject, isAuthError } from '@/lib/research/projects';
+import { authErrorMessage, getProject, isAuthError, uploadProjectDocument } from '@/lib/research/projects';
 import { useBackend } from './backend';
 import Brief, { type BriefField } from './Brief';
 import { FaviconStack } from './Favicon';
@@ -107,12 +108,24 @@ export default function HomeScreen({
     setStarting(true);
     setProblem('');
     try {
-      await Promise.all(files.map(backend.upload));
+      // Project runs only read that project's docs folder — upload there, not global my-docs. :-)
+      if (brief.project_id) {
+        await Promise.all(files.map((file) => uploadProjectDocument(brief.project_id!, file)));
+        if (files.length && brief.report_source === 'web') {
+          setBrief({ ...brief, report_source: 'hybrid' });
+        }
+      } else {
+        await Promise.all(files.map(backend.upload));
+      }
     } catch (e) {
       setStarting(false);
       return setProblem(e instanceof Error ? e.message : String(e));
     }
-    router.push(`/research/${startResearch(question.trim(), brief)}`);
+    const nextBrief =
+      brief.project_id && files.length && brief.report_source === 'web'
+        ? { ...brief, report_source: 'hybrid' as const }
+        : brief;
+    router.push(`/research/${startResearch(question.trim(), nextBrief)}`);
   };
 
   return (
@@ -187,7 +200,7 @@ export default function HomeScreen({
                 ref={picker}
                 type="file"
                 multiple
-                accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.pptx,.html"
+                accept={RESEARCH_FILE_ACCEPT}
                 className="sr-only"
                 tabIndex={-1}
                 aria-hidden="true"

@@ -21,7 +21,7 @@ from langchain_community.document_loaders import BSHTMLLoader
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = frozenset(
-    {"png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"}
+    {"png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"}
 )
 
 _IMAGE_MIME = {
@@ -33,6 +33,8 @@ _IMAGE_MIME = {
     "bmp": "image/bmp",
     "tif": "image/tiff",
     "tiff": "image/tiff",
+    "heic": "image/heic",
+    "heif": "image/heif",
 }
 
 
@@ -60,6 +62,33 @@ def _image_mime_type(file_path: str, file_extension: str) -> str:
     )
 
 
+def _vision_image_payload(file_path: str, file_extension: str) -> tuple[str, str]:
+    """Return (mime, base64) for vision APIs; convert HEIC/HEIF to JPEG when possible. :-)"""
+    if file_extension in {"heic", "heif"}:
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+            with Image.open(file_path) as img:
+                rgb = img.convert("RGB")
+                buf = BytesIO()
+                rgb.save(buf, format="JPEG", quality=90)
+            return "image/jpeg", base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as exc:
+            logger.info(
+                "HEIC/HEIF convert unavailable for %s (%s); sending original bytes.",
+                file_path,
+                exc,
+            )
+
+    mime = _image_mime_type(file_path, file_extension)
+    with open(file_path, "rb") as f:
+        return mime, base64.b64encode(f.read()).decode("ascii")
+
+
 async def describe_image_with_vision(file_path: str) -> str:
     """Describe an image via the configured Smart LLM (multimodal). :-)
 
@@ -70,9 +99,7 @@ async def describe_image_with_vision(file_path: str) -> str:
     from gpt_researcher.utils.llm import create_chat_completion
 
     ext = os.path.splitext(file_path)[1].lstrip(".").lower()
-    mime = _image_mime_type(file_path, ext)
-    with open(file_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("ascii")
+    mime, encoded = _vision_image_payload(file_path, ext)
     data_url = f"data:{mime};base64,{encoded}"
     filename = os.path.basename(file_path)
 
