@@ -15,6 +15,7 @@ import {
 } from '@/lib/research/projects';
 import { listReports, summarize, type ReportRow } from '@/lib/research/reports';
 import { DEFAULT_BRIEF, type BriefValue } from '@/lib/research/brief';
+import { RESEARCH_FILE_ACCEPT } from '@/lib/research/files';
 import { useBrief } from './preferences';
 import { useLinks } from './mode';
 import ProjectSetupCoach from './ProjectSetupCoach';
@@ -299,7 +300,14 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
           <button type="button" className="gr-btn-line h-9 px-3 text-[13px]" onClick={() => picker.current?.click()}>
             + Add files
           </button>
-          <input ref={picker} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            accept={RESEARCH_FILE_ACCEPT}
+            className="hidden"
+            onChange={(e) => void upload(e.target.files)}
+          />
         </div>
         {project.documents.length === 0 ? (
           <div className="mt-4 text-[14px] text-ink-3">

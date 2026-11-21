@@ -317,8 +317,15 @@ function Margin({
     { id: 'chat', label: asked ? `Chat ${asked}` : 'Chat' },
   ];
 
+  const chatOpen = tab === 'chat';
+
   return (
-    <div id="margin" className="flex scroll-mt-20 flex-col min-[768px]:sticky min-[768px]:top-[136px] min-[768px]:max-h-[calc(100vh-152px)]">
+    <div
+      id="margin"
+      className={`flex scroll-mt-20 flex-col min-[768px]:sticky min-[768px]:top-[136px] ${
+        chatOpen ? 'min-h-[70vh] min-[768px]:max-h-[calc(100vh-120px)]' : 'min-[768px]:max-h-[calc(100vh-152px)]'
+      }`}
+    >
       <div role="tablist" aria-label="Sources and chat" className="flex items-end gap-5 border-b border-ink">
         {tabs.map((t) => (
           <button
@@ -408,10 +415,12 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
   const done = run.status === 'done';
   const running = ['researching', 'review', 'drafting', 'writing'].includes(run.status);
   const addenda = chat.messages.filter((m) => m.pinned).length;
+  const chatWide = tab === 'chat';
 
   const wide = useWide();
   const [pinned, setPinned] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [chatDrawer, setChatDrawer] = useState(false);
   const contentsOpen = done && (wide ? pinned : drawer);
   /** The margin arrives with the first written paragraph, when citations start pointing at it. */
   const showMargin = done || Boolean(run.report);
@@ -425,7 +434,9 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
 
   const openChat = () => {
     setTab('chat');
-    document.getElementById('margin')?.scrollIntoView({ behavior: 'smooth' });
+    // Phones: open a full chat sheet. Desktop: scroll to the wider chat column. :-)
+    if (window.matchMedia('(max-width: 767px)').matches) setChatDrawer(true);
+    else document.getElementById('margin')?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const contents = <Contents headings={headings} addenda={addenda} onNavigate={() => setDrawer(false)} />;
@@ -437,8 +448,12 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
         style={{ '--m': showMargin ? 1 : 0 } as React.CSSProperties}
         className={`mx-auto grid max-w-[1440px] gap-y-8 px-3 pb-40 pt-3 transition-[grid-template-columns,column-gap] duration-500 ease-out motion-reduce:transition-none sm:px-7 ${
           pinnedContents
-            ? 'min-[768px]:grid-cols-[minmax(0,1fr)_252px] min-[768px]:gap-x-8 min-[1200px]:grid-cols-[224px_minmax(0,1fr)_268px] min-[1200px]:gap-x-10'
-            : 'min-[768px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*252px)] min-[768px]:gap-x-[calc(var(--m)*32px)] min-[1200px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*268px)] min-[1200px]:gap-x-[calc(var(--m)*40px)]'
+            ? chatWide
+              ? 'min-[768px]:grid-cols-[minmax(0,1fr)_380px] min-[768px]:gap-x-8 min-[1200px]:grid-cols-[200px_minmax(0,1fr)_420px] min-[1200px]:gap-x-10'
+              : 'min-[768px]:grid-cols-[minmax(0,1fr)_252px] min-[768px]:gap-x-8 min-[1200px]:grid-cols-[224px_minmax(0,1fr)_268px] min-[1200px]:gap-x-10'
+            : chatWide
+              ? 'min-[768px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*380px)] min-[768px]:gap-x-[calc(var(--m)*32px)] min-[1200px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*420px)] min-[1200px]:gap-x-[calc(var(--m)*40px)]'
+              : 'min-[768px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*252px)] min-[768px]:gap-x-[calc(var(--m)*32px)] min-[1200px]:grid-cols-[minmax(0,1fr)_calc(var(--m)*268px)] min-[1200px]:gap-x-[calc(var(--m)*40px)]'
         }`}
       >
         {pinnedContents && (
@@ -503,7 +518,11 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
 
         {showMargin && (
           <aside className="min-w-0 min-[768px]:overflow-x-clip min-[768px]:pt-[60px]">
-            <div className="gr-in h-full min-[768px]:w-[252px] min-[1200px]:w-[268px]">
+            <div
+              className={`gr-in h-full ${
+                chatWide ? 'min-[768px]:w-[380px] min-[1200px]:w-[420px]' : 'min-[768px]:w-[252px] min-[1200px]:w-[268px]'
+              }`}
+            >
               <Margin run={run} tab={tab} onTab={setTab} chat={chat} highlight={highlight} onHighlight={setHighlight} />
             </div>
           </aside>
@@ -513,6 +532,23 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
         <Drawer title="Contents" onClose={() => setDrawer(false)}>
           {contents}
         </Drawer>
+      )}
+      {done && chatDrawer && (
+        <div className="fixed inset-0 z-[60] min-[768px]:hidden" role="dialog" aria-modal="true" aria-label="Chat">
+          <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 bg-ink/30" onClick={() => setChatDrawer(false)} />
+          <div className="gr-in absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col bg-paper px-4 pb-6 pt-4 shadow-[0_0_60px_-20px_rgba(26,22,18,0.6)]">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="gr-meta">Chat</p>
+              <button type="button" onClick={() => setChatDrawer(false)} aria-label="Close chat" className="grid h-8 w-8 place-items-center text-[18px] text-ink-2 hover:text-rubric">
+                ×
+              </button>
+            </div>
+            <div data-scroll-box className="gr-scroll min-h-0 flex-1 overflow-auto">
+              <ChatThread run={run} chat={chat} />
+            </div>
+            <ChatComposer run={run} chat={chat} />
+          </div>
+        </div>
       )}
       {figure !== undefined && run.images.length > 0 && (
         <Lightbox images={run.images} index={Math.min(figure, run.images.length - 1)} onIndex={setFigure} onClose={() => setFigure(undefined)} />

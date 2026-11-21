@@ -1,9 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { RESEARCH_FILE_ACCEPT } from '@/lib/research/files';
 import type { RunState } from '@/lib/research/run';
 import { useCitedHtml } from './Sheet';
 import { copyText } from './clipboard';
+
+export interface ChatAttachment {
+  name: string;
+  text: string;
+}
 
 export interface ChatMessage {
   id: number;
@@ -14,6 +20,7 @@ export interface ChatMessage {
   seconds?: number;
   usedWeb?: boolean;
   pinned?: boolean;
+  attachments?: { name: string }[];
 }
 
 /** Talks to the backend's `/api/chat`, which answers from the report and can search the web. */
@@ -21,12 +28,24 @@ export function useChat(report: string, initial: ChatMessage[] = []) {
   const [messages, setMessages] = useState<ChatMessage[]>(initial);
   const busy = messages.some((m) => m.pending);
 
-  const ask = async (question: string, history = messages) => {
+  const ask = async (question: string, history = messages, attachments: ChatAttachment[] = []) => {
     const q = question.trim();
-    if (!q || busy) return;
+    if ((!q && !attachments.length) || busy) return;
     const id = Date.now();
     const settled = history.filter((m) => !m.pending && !m.error);
-    setMessages([...history, { id, role: 'user', content: q }, { id: id + 1, role: 'assistant', content: '', pending: true }]);
+    const userText =
+      q ||
+      (attachments.length === 1 ? `Please use the attached file (${attachments[0].name}).` : 'Please use the attached files.');
+    setMessages([
+      ...history,
+      {
+        id,
+        role: 'user',
+        content: userText,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      },
+      { id: id + 1, role: 'assistant', content: '', pending: true },
+    ]);
     const started = performance.now();
 
     let patch: Partial<ChatMessage>;
@@ -34,7 +53,11 @@ export function useChat(report: string, initial: ChatMessage[] = []) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ report, messages: [...settled, { role: 'user', content: q }].map(({ role, content }) => ({ role, content })) }),
+        body: JSON.stringify({
+          report,
+          messages: [...settled, { role: 'user', content: userText }].map(({ role, content }) => ({ role, content })),
+          attachments: attachments.map(({ name, text }) => ({ name, text })),
+        }),
       });
       const data = (await res.json()) as { response?: { content?: string; metadata?: { tool_calls?: unknown[] } | null }; error?: string };
       const content = data.response?.content;
@@ -147,7 +170,9 @@ export function ChatThread({ run, chat }: { run: RunState; chat: Chat }) {
     <div className="py-4" aria-live="polite">
       {chat.messages.length === 0 ? (
         <>
-          <p className="text-[13.5px] leading-snug text-ink-2">Ask about this report. Answers cite its sources, and you can add the good ones to the report.</p>
+          <p className="text-[13.5px] leading-snug text-ink-2">
+            Ask about this report, or attach a photo / file so the answer can use it. You can add good answers to the report.
+          </p>
           <ul className="mt-4 border-t border-rule-soft">
             {SUGGESTED.map((q) => (
               <li key={q} className="border-b border-rule-soft">
@@ -167,6 +192,15 @@ export function ChatThread({ run, chat }: { run: RunState; chat: Chat }) {
                   <span className="mr-1.5 font-code text-[11px] font-medium text-rubric">Q</span>
                   {m.content}
                 </p>
+                {!!m.attachments?.length && (
+                  <ul className="mt-2 space-y-1">
+                    {m.attachments.map((a) => (
+                      <li key={a.name} className="font-code text-[11px] text-ink-3">
+                        Attached · {a.name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             ) : (
               <li key={m.id} className="gr-in">
@@ -181,44 +215,115 @@ export function ChatThread({ run, chat }: { run: RunState; chat: Chat }) {
   );
 }
 
+async function extractAttachment(file: File): Promise<ChatAttachment> {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await fetch('/api/documents/extract', { method: 'POST', body });
+  const data = (await res.json()) as { filename?: string; text?: string; detail?: string; error?: string };
+  if (!res.ok || !data.text?.trim()) {
+    throw new Error(data.detail || data.error || `Could not read ${file.name}`);
+  }
+  return { name: data.filename || file.name, text: data.text };
+}
+
 export function ChatComposer({ run, chat }: { run: RunState; chat: Chat }) {
   const [draft, setDraft] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [problem, setProblem] = useState('');
+  const picker = useRef<HTMLInputElement>(null);
   const ready = run.status === 'done';
-  const send = () => {
-    if (!draft.trim() || chat.busy) return;
-    void chat.ask(draft);
-    setDraft('');
+  const canSend = ready && !chat.busy && !uploading && (Boolean(draft.trim()) || files.length > 0);
+
+  const send = async () => {
+    if (!canSend) return;
+    setProblem('');
+    setUploading(true);
+    try {
+      const attachments = await Promise.all(files.map(extractAttachment));
+      const question = draft;
+      setDraft('');
+      setFiles([]);
+      await chat.ask(question, chat.messages, attachments);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        send();
+        void send();
       }}
       className="border-t border-ink pt-3"
     >
+      {files.length > 0 && (
+        <ul className="mb-2 flex flex-wrap gap-1.5" aria-label="Files to attach">
+          {files.map((f) => (
+            <li key={f.name} className="inline-flex h-8 max-w-full items-center gap-2 bg-paper pl-3 pr-1 shadow-[inset_0_0_0_1px_rgba(29,25,21,0.14)]">
+              <span className="truncate text-[12.5px] font-medium">{f.name}</span>
+              <button
+                type="button"
+                onClick={() => setFiles((current) => current.filter((x) => x !== f))}
+                aria-label={`Remove ${f.name}`}
+                className="grid h-6 w-6 place-items-center text-ink-3 hover:text-rubric"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <label className="block">
         <span className="sr-only">Ask about this report</span>
         <textarea
-          rows={2}
+          rows={4}
           value={draft}
-          disabled={!ready}
+          disabled={!ready || uploading}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              send();
+              void send();
             }
           }}
-          placeholder={ready ? 'Ask about this report' : 'Available when the report is done'}
-          className="gr-input w-full resize-none bg-paper-hi px-3 py-2.5 font-display text-[15px] leading-snug outline-none shadow-[inset_0_0_0_1px_rgba(29,25,21,0.26)] focus:shadow-[inset_0_0_0_1px_#1A1612] disabled:opacity-50"
+          placeholder={ready ? 'Ask about this report, or attach a photo / file' : 'Available when the report is done'}
+          className="gr-input min-h-[96px] w-full resize-y bg-paper-hi px-3 py-2.5 font-display text-[15px] leading-snug outline-none shadow-[inset_0_0_0_1px_rgba(29,25,21,0.26)] focus:shadow-[inset_0_0_0_1px_#1A1612] disabled:opacity-50"
         />
       </label>
-      <div className="mt-2 flex items-center justify-between">
-        <span className="font-code text-[10.5px] text-ink-3">Enter to send</span>
-        <button type="submit" className="gr-btn h-8 px-3.5 text-[13px]" disabled={!ready || !draft.trim() || chat.busy}>
-          Ask
+      {problem && (
+        <p role="alert" className="mt-2 text-[13px] text-rubric">
+          {problem}
+        </p>
+      )}
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button type="button" className="gr-btn-line h-8 px-3 text-[12.5px]" disabled={!ready || uploading} onClick={() => picker.current?.click()}>
+            + File
+          </button>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            accept={RESEARCH_FILE_ACCEPT}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(e) => {
+              const incoming = Array.from(e.target.files ?? []);
+              if (incoming.length) {
+                setFiles((current) => [...current, ...incoming.filter((f) => !current.some((c) => c.name === f.name))]);
+              }
+              e.target.value = '';
+            }}
+          />
+          <span className="font-code text-[10.5px] text-ink-3">{uploading ? 'Reading file…' : 'Enter to send'}</span>
+        </div>
+        <button type="submit" className="gr-btn h-8 px-3.5 text-[13px]" disabled={!canSend}>
+          {uploading ? 'Uploading' : 'Ask'}
         </button>
       </div>
     </form>
