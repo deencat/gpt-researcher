@@ -175,6 +175,7 @@ async def handle_start_command(websocket, data: str, manager):
     # Scope documents + instructions to a Project when provided (Perplexity-style). :-)
     try:
         from .auth_user import require_user
+        from .project_context import apply_project_instructions
         from .project_store import ProjectStore
 
         ws_headers = dict(getattr(websocket, "headers", {}) or {})
@@ -192,18 +193,17 @@ async def handle_start_command(websocket, data: str, manager):
                 has_docs = docs.exists() and any(docs.iterdir())
                 if has_docs:
                     os.environ["DOC_PATH"] = str(docs)
-                if project.get("instructions"):
-                    task = (
-                        "Follow these project instructions for the entire research and report:\n"
-                        f"{project['instructions'].strip()}\n\n"
-                        f"Research question:\n{task}"
-                    )
-                # Never hybrid/local without files — that hard-fails with "Failed to load any documents!". :-)
-                if has_docs and report_source == "web":
-                    report_source = "hybrid"
-                elif not has_docs and report_source in ("hybrid", "local"):
+                elif report_source in ("hybrid", "local"):
                     logger.info("Project has no documents; falling back to web research")
-                    report_source = "web"
+                # Keep the user's question as task; put instructions in agent_role. :-)
+                task, report_source, agent_role, custom_prompt = apply_project_instructions(
+                    task=task,
+                    report_source=report_source,
+                    project=project,
+                    has_docs=has_docs,
+                    agent_role=agent_role,
+                    custom_prompt=custom_prompt or "",
+                )
     except Exception as e:
         logger.warning(f"Project context skipped: {e}")
 
