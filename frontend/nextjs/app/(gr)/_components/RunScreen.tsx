@@ -8,6 +8,7 @@ import { FaviconStack, domainsBySources } from './Favicon';
 import Lightbox from './Lightbox';
 import { popoverPanel, usePopover } from './popover';
 import Sheet, { readingMinutes, useCitedHtml, useReportHtml, type Heading } from './Sheet';
+import SessionActions from './SessionActions';
 import Sources, { sourcesSummary } from './Sources';
 import { StageList, StageStrip, stageTime, statusWord } from './Stages';
 import { clock } from './ui';
@@ -389,6 +390,9 @@ export interface RunScreenProps {
   date: string;
   /** Path of this report's page, for Share. */
   sharePath: string;
+  reportId?: string;
+  projectId?: string | null;
+  onProjectChange?: (projectId: string | null) => void;
   chatInitial?: ChatMessage[];
   onChatChange?: (messages: ChatMessage[]) => void;
   onStop?: () => void;
@@ -398,7 +402,22 @@ export interface RunScreenProps {
   initialFigure?: number;
 }
 
-export default function RunScreen({ run, label, date, sharePath, chatInitial = [], onChatChange, onStop, onRestart, onReview, initialTab, initialFigure }: RunScreenProps) {
+export default function RunScreen({
+  run,
+  label,
+  date,
+  sharePath,
+  reportId,
+  projectId,
+  onProjectChange,
+  chatInitial = [],
+  onChatChange,
+  onStop,
+  onRestart,
+  onReview,
+  initialTab,
+  initialFigure,
+}: RunScreenProps) {
   const [highlight, setHighlight] = useState<number>();
   const [tab, setTab] = useState<Tab>(initialTab ?? (chatInitial.length ? 'chat' : 'sources'));
   const [figure, setFigure] = useState(initialFigure);
@@ -470,6 +489,9 @@ export default function RunScreen({ run, label, date, sharePath, chatInitial = [
             <div className="ml-auto flex flex-none items-center gap-2">
               {done ? (
                 <>
+                  {reportId && (
+                    <SessionActions reportId={reportId} projectId={projectId} onProjectChange={onProjectChange} compact />
+                  )}
                   <Share path={sharePath} />
                   <Download run={run} sharePath={sharePath} />
                   <button type="button" className="gr-btn-line min-[768px]:!hidden" onClick={openChat}>

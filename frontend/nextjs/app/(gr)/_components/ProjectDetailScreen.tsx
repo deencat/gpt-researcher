@@ -13,7 +13,7 @@ import {
   uploadProjectDocument,
   type Project,
 } from '@/lib/research/projects';
-import { listReports, summarize, type ReportRow } from '@/lib/research/reports';
+import { listReports, reportsStore, setReportProject, summarize, type ReportRow } from '@/lib/research/reports';
 import { DEFAULT_BRIEF, type BriefValue } from '@/lib/research/brief';
 import { useBrief } from './preferences';
 import { useLinks } from './mode';
@@ -350,13 +350,28 @@ export default function ProjectDetailScreen({ projectId }: { projectId: string }
         ) : (
           <ul className="mt-4 divide-y divide-rule-soft border-t border-rule-soft">
             {rows.map((row) => (
-              <li key={row.id}>
-                <Link href={links.report(row.id)} className="block py-4 hover:bg-ink/[0.02]">
+              <li key={row.id} className="flex items-start justify-between gap-4 py-4">
+                <Link href={links.report(row.id)} className="min-w-0 flex-1 hover:bg-ink/[0.02]">
                   <div className="text-[15px] font-medium">{row.title || row.question}</div>
                   <div className="mt-1 font-code text-[11px] text-ink-3">
                     {row.date} · {row.type}
                   </div>
                 </Link>
+                <button
+                  type="button"
+                  className="shrink-0 font-code text-[10.5px] uppercase tracking-[0.1em] text-ink-3 hover:text-rubric"
+                  onClick={() =>
+                    void setReportProject(row.id, null)
+                      .then(() => {
+                        setRows((current) => current.filter((r) => r.id !== row.id));
+                        void reportsStore.refresh();
+                        setNote('Removed from this project.');
+                      })
+                      .catch(() => setNote('Could not remove that report from the project.'))
+                  }
+                >
+                  Remove
+                </button>
               </li>
             ))}
           </ul>

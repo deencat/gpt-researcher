@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { deleteReport, reportsStore, type ReportRow } from '@/lib/research/reports';
+import { listProjects, type Project } from '@/lib/research/projects';
+import { deleteReport, reportsStore, setReportProject, type ReportRow } from '@/lib/research/reports';
 import { FaviconStack } from './Favicon';
 import { useLinks, useMock } from './mode';
 import { Arrow, Eye } from './ui';
@@ -20,10 +21,19 @@ export default function ArchiveScreen() {
   const [hidden, setHidden] = useState<string[]>([]);
   const [deleted, setDeleted] = useState<ReportRow>();
   const [problem, setProblem] = useState('');
+  const [projects, setProjects] = useState<Project[]>([]);
   const pendingDelete = useRef<string>();
 
   const rows = useMemo(() => all.filter((r) => !hidden.includes(r.id)), [all, hidden]);
   const filters = ['All', ...TYPES.filter((t) => rows.some((r) => r.type === t))];
+  const projectName = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
+
+  useEffect(() => {
+    if (mock) return;
+    void listProjects()
+      .then(setProjects)
+      .catch(() => undefined);
+  }, [mock]);
 
   /** The delete only reaches the backend once the undo window has passed. */
   const commit = useCallback(
@@ -78,6 +88,17 @@ export default function ArchiveScreen() {
     pendingDelete.current = undefined;
     setHidden((h) => h.filter((x) => x !== deleted.id));
     setDeleted(undefined);
+  };
+
+  const moveToProject = async (report: ReportRow, projectId: string | null) => {
+    if (mock) return;
+    setProblem('');
+    try {
+      await setReportProject(report.id, projectId);
+      await reportsStore.refresh();
+    } catch {
+      setProblem('Could not update the project for that report.');
+    }
   };
 
   return (
@@ -175,6 +196,11 @@ export default function ArchiveScreen() {
                     <span className="min-w-0">
                       <span className="block font-display text-[19px] font-semibold leading-snug group-hover:text-rubric">{r.title}</span>
                       <span className="mt-1 block truncate text-[13.5px] text-ink-3">{r.question}</span>
+                      {r.project_id && (
+                        <span className="mt-1 block font-code text-[10.5px] uppercase tracking-[0.1em] text-ink-3">
+                          Project · {projectName[r.project_id] || r.project_id}
+                        </span>
+                      )}
                     </span>
                     <span className="col-start-2 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:contents">
                       <span className="sm:mt-1 sm:self-start">
@@ -186,14 +212,33 @@ export default function ArchiveScreen() {
                     <span className="hidden text-right font-code text-[11px] tabular-nums text-ink-3 sm:block">{r.time}</span>
                     <Arrow className="hidden opacity-0 transition-opacity group-hover:opacity-100 sm:block" />
                   </Link>
-                  <button
-                    type="button"
-                    onClick={() => remove(r)}
-                    aria-label={`Delete ${r.title}`}
-                    className="absolute right-0 top-5 font-code text-[10.5px] uppercase tracking-[0.1em] text-ink-3 transition-opacity hover:text-rubric focus-visible:opacity-100 sm:right-2 sm:opacity-0 sm:group-hover:opacity-100"
-                  >
-                    Delete
-                  </button>
+                  <div className="absolute right-0 top-5 flex flex-col items-end gap-2 sm:right-2 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                    <label className="sr-only" htmlFor={`project-${r.id}`}>
+                      Move {r.title} to project
+                    </label>
+                    <select
+                      id={`project-${r.id}`}
+                      className="max-w-[140px] bg-paper font-code text-[10.5px] uppercase tracking-[0.08em] text-ink-3 outline-none"
+                      value={r.project_id || ''}
+                      onChange={(e) => void moveToProject(r, e.target.value || null)}
+                      onClick={(e) => e.preventDefault()}
+                    >
+                      <option value="">No project</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => remove(r)}
+                      aria-label={`Delete ${r.title}`}
+                      className="font-code text-[10.5px] uppercase tracking-[0.1em] text-ink-3 transition-colors hover:text-rubric"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
