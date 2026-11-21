@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { RESEARCH_FILE_ACCEPT } from '@/lib/research/files';
 import { startResearch } from '@/lib/research/live';
 import { checkMcp } from '@/lib/research/mcp';
 import { authErrorMessage, getProject, isAuthError } from '@/lib/research/projects';
@@ -187,7 +188,7 @@ export default function HomeScreen({
                 ref={picker}
                 type="file"
                 multiple
-                accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.pptx,.html"
+                accept={RESEARCH_FILE_ACCEPT}
                 className="sr-only"
                 tabIndex={-1}
                 aria-hidden="true"

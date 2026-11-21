@@ -194,12 +194,13 @@ class ChatAgentWithMemory:
             return self.report
         return context or self.report
 
-    async def chat(self, messages, websocket=None):
+    async def chat(self, messages, websocket=None, attachments=None):
         """Chat with configured LLM provider (supports OpenAI, Google Gemini, Anthropic, etc.)
         
         Args:
             messages: List of chat messages with role and content
             websocket: Optional websocket for streaming responses
+            attachments: Optional list of {name, text} docs/images for this turn. :-)
         
         Returns:
             tuple: (str: The AI response message, dict: metadata about tool usage)
@@ -213,6 +214,23 @@ class ChatAgentWithMemory:
                     last_user = str(msg.get("content"))
                     break
             report_context = await self._retrieve_context(last_user)
+
+            attachment_block = ""
+            if attachments:
+                parts = []
+                for item in attachments:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "attachment").strip() or "attachment"
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        parts.append(f"### Attached: {name}\n{text}")
+                if parts:
+                    attachment_block = (
+                        "\n\nThe user attached the following document(s) or image description(s) "
+                        "for this question. Treat them as primary evidence when answering:\n"
+                        + "\n\n".join(parts)
+                    )
 
             # Format system prompt with the report context
             system_prompt = f"""
@@ -232,7 +250,7 @@ class ChatAgentWithMemory:
             Assume the current time is: {datetime.now()}.
             
             Report: {report_context}
-            
+            {attachment_block}
             """
             
             # Format message history for OpenAI input

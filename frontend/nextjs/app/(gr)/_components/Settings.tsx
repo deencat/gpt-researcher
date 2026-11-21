@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { reportLabel, type BriefValue } from '@/lib/research/brief';
+import { RESEARCH_FILE_ACCEPT } from '@/lib/research/files';
 import { MCP_PRESETS, checkMcp, formatMcp, mcpPlaceholders, togglePreset } from '@/lib/research/mcp';
 import { MCP_STRATEGIES, REPORT_TYPES, SOURCES, SitesEditor, TONES, type Option } from './Brief';
 import { useBackend, type BackendStatus } from './backend';
@@ -280,7 +281,7 @@ function DocumentsPanel({ brief, onChange }: { brief: BriefValue; onChange: (bri
             ref={picker}
             type="file"
             multiple
-            accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.pptx,.html"
+            accept={RESEARCH_FILE_ACCEPT}
             className="sr-only"
             tabIndex={-1}
             aria-hidden="true"
@@ -332,7 +333,7 @@ function DocumentsPanel({ brief, onChange }: { brief: BriefValue; onChange: (bri
           ))}
         </ul>
       ) : (
-        <p className="mt-4 text-[13.5px] leading-snug text-ink-3">No documents yet. Add PDFs, Word files, spreadsheets or text, and research can read them.</p>
+        <p className="mt-4 text-[13.5px] leading-snug text-ink-3">No documents yet. Add PDFs, Word files, spreadsheets, text, or phone photos, and research can read them.</p>
       )}
     </Section>
   );

@@ -63,11 +63,17 @@ class ResearchRequest(BaseModel):
     generate_in_background: bool = True
 
 
+class ChatAttachment(BaseModel):
+    name: str
+    text: str
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")  # Allow extra fields in the request
     
     report: str
     messages: List[Dict[str, Any]]
+    attachments: List[ChatAttachment] | None = None
 
 
 @asynccontextmanager
@@ -548,6 +554,45 @@ async def websocket_endpoint(websocket: WebSocket):
         # Release the connection's queue and sender task however the loop ended.
         await manager.disconnect(websocket)
 
+@app.post("/api/documents/extract")
+async def extract_document(file: UploadFile = File(...)):
+    """Extract readable text from an uploaded file (including images via vision). :-)"""
+    import shutil
+    import tempfile
+
+    from gpt_researcher.document.document import IMAGE_EXTENSIONS, DocumentLoader, load_image_as_documents
+
+    filename = os.path.basename(file.filename or "upload.bin")
+    suffix = os.path.splitext(filename)[1]
+    fd, path = tempfile.mkstemp(suffix=suffix or ".bin")
+    os.close(fd)
+    try:
+        with open(path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        ext = suffix.lstrip(".").lower()
+        if ext in IMAGE_EXTENSIONS:
+            pages = await load_image_as_documents(path)
+            text = "\n\n".join((p.page_content or "").strip() for p in pages if (p.page_content or "").strip())
+        else:
+            docs = await DocumentLoader([path]).load()
+            text = "\n\n".join(
+                str(d.get("raw_content") or "").strip() for d in docs if str(d.get("raw_content") or "").strip()
+            )
+        if not text.strip():
+            raise HTTPException(status_code=422, detail=f"Could not extract text from {filename}")
+        return {"filename": filename, "text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Document extract failed for {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest):
     """Process a chat request with a report and message history.
@@ -568,8 +613,14 @@ async def chat(chat_request: ChatRequest):
             headers=None
         )
 
+        attachments = None
+        if chat_request.attachments:
+            attachments = [a.model_dump() for a in chat_request.attachments]
+
         # Process the chat and get response with metadata
-        response_content, tool_calls_metadata = await chat_agent.chat(chat_request.messages, None)
+        response_content, tool_calls_metadata = await chat_agent.chat(
+            chat_request.messages, None, attachments=attachments
+        )
         logger.info(f"response_content: {response_content}")
         logger.info(f"Got chat response of length: {len(response_content) if response_content else 0}")
         
