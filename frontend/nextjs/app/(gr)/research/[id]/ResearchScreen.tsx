@@ -55,6 +55,7 @@ export default function ResearchScreen({ id }: { id: string }) {
   const [saved, setSaved] = useState<Saved>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const [now, setNow] = useState(0);
+  const [projectOverride, setProjectOverride] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (isLive) return;
@@ -94,6 +95,9 @@ export default function ResearchScreen({ id }: { id: string }) {
         label={reportLabel(live.brief.report_type)}
         date={day(Date.now())}
         sharePath={`/research/${id}`}
+        reportId={id}
+        projectId={projectOverride !== undefined ? projectOverride : live.brief.project_id}
+        onProjectChange={setProjectOverride}
         chatInitial={fromStored(live.chat)}
         onChatChange={onChatChange}
         onStop={() => stopResearch(id)}
@@ -112,6 +116,12 @@ export default function ResearchScreen({ id }: { id: string }) {
         label={reportLabel(report.brief?.report_type)}
         date={report.timestamp ? day(report.timestamp) : ''}
         sharePath={`/research/${id}`}
+        reportId={id}
+        projectId={projectOverride !== undefined ? projectOverride : report.project_id}
+        onProjectChange={(projectId) => {
+          setProjectOverride(projectId);
+          setSaved({ status: 'found', report: { ...report, project_id: projectId ?? undefined } });
+        }}
         chatInitial={fromStored(report.chatMessages)}
         onChatChange={onChatChange}
         onRestart={() => restart(report.question, { ...DEFAULT_BRIEF, ...report.brief })}

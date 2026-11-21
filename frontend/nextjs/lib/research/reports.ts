@@ -21,7 +21,7 @@ export interface StoredReport {
   chatMessages?: StoredChatMessage[];
   timestamp?: number;
   brief?: Partial<BriefValue>;
-  project_id?: string;
+  project_id?: string | null;
   owner_email?: string;
 }
 
@@ -38,6 +38,7 @@ export interface ReportRow {
   /** Most cited sites first. */
   domains: string[];
   time: string;
+  project_id?: string;
 }
 
 /** Older reports were saved without receive times, so their events all sit at zero. */
@@ -78,6 +79,7 @@ export function summarize(report: StoredReport): ReportRow {
     words: run.words,
     domains: domainsByCitations(run.sources),
     time: run.elapsed > 0 ? clock(run.elapsed) : '',
+    project_id: report.project_id || undefined,
   };
 }
 
@@ -99,6 +101,10 @@ export const saveReport = async (report: StoredReport) =>
 
 export const updateReport = async (id: string, patch: Partial<StoredReport>) =>
   json(await fetch(`/api/reports/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }));
+
+/** Move a research session into a project, or pass null to remove it from any project. :-) */
+export const setReportProject = async (id: string, projectId: string | null) =>
+  updateReport(id, { project_id: projectId });
 
 export const deleteReport = async (id: string, keepalive = false) => {
   const res = await fetch(`/api/reports/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive });

@@ -358,10 +358,20 @@ async def update_report(research_id: str, request: Request):
 
     data = await request.json()
     now_ms = int(time.time() * 1000)
+    protected = {"id", "owner_email"}
+    # Allow clearing project_id with null/"" so sessions can leave a project. :-)
+    patch = {}
+    for key, value in data.items():
+        if key in protected:
+            continue
+        if key == "project_id" and value in (None, ""):
+            patch[key] = None
+        elif value is not None:
+            patch[key] = value
 
     updated = {
         **existing,
-        **{k: v for k, v in data.items() if v is not None},
+        **patch,
         "id": research_id,
         "timestamp": now_ms,
         "owner_email": user.email,
